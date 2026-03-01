@@ -407,11 +407,6 @@ export default function AdminHomePage() {
           <li>
             <Link href="/admin/classes">수강권 생성 + 레슨 자동 생성</Link>
           </li>
-          <li>
-            <Link href="/admin/lesson-change-status">
-              레슨 변경 요청 관리 + 예외 허용 토글
-            </Link>
-          </li>
         </ul>
       </div>
     </AdminLayoutShell>

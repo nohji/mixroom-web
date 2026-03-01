@@ -11,7 +11,7 @@ function phoneToEmail(phoneDigits: string) {
 
 export async function POST(req: Request) {
   try {
-    const guard = await requireAdmin(req);
+    const guard = await requireAdmin();
     if (!guard.ok) {
       return NextResponse.json({ error: guard.error }, { status: guard.status });
     }

@@ -8,9 +8,11 @@ const items = [
   { href: "/admin", label: "대시보드" },
   { href: "/admin/users", label: "사용자 등록/현황" },
   { href: "/admin/classes", label: "수강권/레슨 생성" },
+  { href: "/admin/classes-list", label: "수강권 목록" },
   { href: "/admin/teachers", label: "강사 근무시간" },
   { href: "/admin/lessons", label: "레슨 현황" },
-  { href: "/admin/lesson-change-status", label: "레슨 변경 현황" },
+  { href: "/admin/lesson-change-requests", label: "레슨 변경요청 관리" },
+  { href: "/admin/practice-reservations", label: "연습실 변경요청 관리" },
 ];
 
 export default function AdminLayoutShell({
@@ -27,8 +29,9 @@ export default function AdminLayoutShell({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "220px 1fr",
+          gridTemplateColumns: "220px minmax(0, 1fr)", // ✅ 핵심: minmax(0, 1fr)
           gap: 16,
+          minWidth: 0, // ✅ 전체도 안전하게
         }}
       >
         {/* Sidebar */}
@@ -69,13 +72,14 @@ export default function AdminLayoutShell({
                     padding: "8px 10px",
                     borderRadius: 8,
                     textDecoration: "none",
-                    border: active
-                      ? "1px solid #111"
-                      : "1px solid #e5e5e5",
+                    border: active ? "1px solid #111" : "1px solid #e5e5e5",
                     background: active ? "#f5f5f5" : "#fff",
                     fontWeight: active ? 700 : 500,
                     color: "#111",
                     transition: "background 0.15s ease",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {it.label}
@@ -86,7 +90,15 @@ export default function AdminLayoutShell({
         </aside>
 
         {/* Content */}
-        <main style={{ color: "#111" }}>{children}</main>
+        <main
+          style={{
+            color: "#111",
+            minWidth: 0, // ✅ 핵심: 여기 없으면 가로 긴 자식이 레이아웃 깨뜨림
+            overflow: "hidden", // ✅ 내부 스크롤은 children쪽에서 처리하게
+          }}
+        >
+          {children}
+        </main>
       </div>
     </AdminShell>
   );

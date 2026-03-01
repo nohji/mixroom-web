@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/requireAdmin";
 import { supabaseServer } from "@/lib/supabaseServer";
 
 export async function GET(req: Request) {
-  const guard = await requireAdmin(req);
+  const guard = await requireAdmin();
   if (!guard.ok) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
   }

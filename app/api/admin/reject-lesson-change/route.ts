@@ -7,7 +7,7 @@ export async function POST(req: Request) {
     /* ------------------------------
      * 1) 관리자 권한 체크 (401 / 403)
      * ------------------------------ */
-    const guard = await requireAdmin(req);
+    const guard = await requireAdmin();
     if (!guard.ok) {
       return NextResponse.json(
         { error: guard.error },

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AdminLayoutShell from "@/components/admin/AdminLayoutShell";
-import { authFetch } from "@/lib/authFetch";
+import { createBrowserClient } from "@supabase/ssr";
 
 type Teacher = { id: string; name: string | null };
 
@@ -10,10 +10,10 @@ type Availability = {
   id: string;
   teacher_id: string;
   weekday: number;
-  start_time: string; // "HH:mm:ss" or "HH:mm"
-  end_time: string;
+  start_time: string; // "HH:mm:ss"
+  end_time: string; // "HH:mm:ss"
   slot_minutes: number;
-  device_type: string;
+  device_type: string; // "both" | "controller" | "turntable"
   is_active: boolean;
   effective_from: string | null; // "YYYY-MM-DD"
   effective_until: string | null; // "YYYY-MM-DD"
@@ -22,7 +22,7 @@ type Availability = {
 const weekdayLabel = ["일", "월", "화", "수", "목", "금", "토"];
 
 function hhmm(t: string) {
-  return String(t).slice(0, 5);
+  return String(t ?? "").slice(0, 5);
 }
 
 function todayYmd() {
@@ -42,22 +42,29 @@ function addMonthsYmd(baseYmd: string, months: number) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// ✅ 60분 단위 시간 옵션 (00:00~23:00)
+// ✅ 60분 단위 옵션
 function buildHourOptions() {
   const arr: string[] = [];
-  for (let h = 0; h <= 23; h++) {
-    arr.push(`${String(h).padStart(2, "0")}:00`);
-  }
+  for (let h = 0; h <= 23; h++) arr.push(`${String(h).padStart(2, "0")}:00`);
   return arr;
 }
 const HOUR_OPTIONS = buildHourOptions();
 
 function toMin(t: string) {
   const [hh, mm] = t.split(":").map(Number);
-  return hh * 60 + mm;
+  return (hh ?? 0) * 60 + (mm ?? 0);
 }
 
+type DeviceType = "both" | "controller" | "turntable";
+
 export default function AdminTeachersPage() {
+  const supabase = useMemo(() => {
+    return createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }, []);
+
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [teacherId, setTeacherId] = useState<string>("");
 
@@ -68,41 +75,98 @@ export default function AdminTeachersPage() {
   const [weekday, setWeekday] = useState<number>(1);
   const [startTime, setStartTime] = useState("13:00");
   const [endTime, setEndTime] = useState("18:00");
-  const [deviceType, setDeviceType] = useState<"both" | "controller" | "turntable">("both");
+  const [deviceType, setDeviceType] = useState<DeviceType>("both");
 
   // ✅ 기간(기본값: 오늘~6개월 후)
   const [effectiveFrom, setEffectiveFrom] = useState<string>(todayYmd());
   const [effectiveUntil, setEffectiveUntil] = useState<string>(addMonthsYmd(todayYmd(), 6));
 
-  const loadTeachers = async () => {
-    const res = await authFetch("/api/admin/teachers");
-    const data = await res.json().catch(() => ({}));
+  // --------------------------
+  // Auth helpers
+  // --------------------------
+  const ensureLoggedIn = async () => {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) {
+      alert("로그인이 필요합니다.");
+      return false;
+    }
+    return true;
+  };
+
+  const getAccessToken = async (): Promise<string | null> => {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  };
+
+  const adminFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const token = await getAccessToken();
+    if (!token) throw new Error("세션 토큰이 없습니다. 다시 로그인해 주세요.");
+
+    const headers = new Headers(init?.headers ?? {});
+    headers.set("Authorization", `Bearer ${token}`);
+    if (!headers.has("Content-Type") && init?.method && init.method !== "GET") {
+      headers.set("Content-Type", "application/json");
+    }
+
+    const res = await fetch(input, {
+      ...init,
+      headers,
+      credentials: "include",
+    });
+
+    const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      alert(data.error ?? "강사 목록 조회 실패");
+      throw new Error(j?.error ?? `HTTP_${res.status}`);
+    }
+    return j;
+  };
+
+  // --------------------------
+  // Load teachers (profiles_public)
+  // --------------------------
+  const loadTeachers = async () => {
+    if (!(await ensureLoggedIn())) return;
+
+    // role이 대소문자/공백 섞이면 ilike로 바꾸는 게 안전함
+    const { data, error } = await supabase
+      .from("profiles_public")
+      .select("id,name")
+      .ilike("role", "teacher")
+      .order("name", { ascending: true });
+
+    if (error) {
+      alert(error.message ?? "강사 목록 조회 실패");
       setTeachers([]);
       return;
     }
-    const list = (data.rows ?? []) as Teacher[];
+
+    const list = (data ?? []) as Teacher[];
     setTeachers(list);
     if (!teacherId && list.length > 0) setTeacherId(list[0].id);
   };
 
+  // --------------------------
+  // Load availabilities (USE ADMIN ROUTE)
+  // --------------------------
   const loadAvailabilities = async (tid: string) => {
     if (!tid) return;
+    if (!(await ensureLoggedIn())) return;
+
     setLoading(true);
+    try {
+      // ✅ route는 teacherId 파라미터를 씀
+      const j = await adminFetch(`/api/admin/teacher-availabilities?teacherId=${encodeURIComponent(tid)}`, {
+        method: "GET",
+      });
 
-    const res = await authFetch(
-      `/api/admin/teacher-availabilities?teacherId=${encodeURIComponent(tid)}`
-    );
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      alert(data.error ?? "근무시간 조회 실패");
+      const list = Array.isArray(j?.rows) ? (j.rows as Availability[]) : [];
+      setRows(list);
+    } catch (e: any) {
+      alert(e?.message ?? "근무시간 조회 실패");
       setRows([]);
-    } else {
-      setRows((data.rows ?? []) as Availability[]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -116,8 +180,12 @@ export default function AdminTeachersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teacherId]);
 
+  // --------------------------
+  // Add row (USE ADMIN ROUTE POST)
+  // --------------------------
   const addRow = async () => {
     if (!teacherId) return;
+    if (!(await ensureLoggedIn())) return;
 
     if (!effectiveFrom || !effectiveUntil) {
       alert("기간(시작일/종료일)을 선택해줘!");
@@ -127,76 +195,77 @@ export default function AdminTeachersPage() {
       alert("기간 오류: 시작일이 종료일보다 늦어요.");
       return;
     }
-
-    // ✅ 시작/종료 시간 검증
     if (toMin(startTime) >= toMin(endTime)) {
       alert("시간 오류: 시작시간은 종료시간보다 빨라야 해요.");
       return;
     }
 
-    const res = await authFetch("/api/admin/teacher-availabilities", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        teacherId,
-        weekday,
-        startTime,
-        endTime,
+    try {
+      await adminFetch(`/api/admin/teacher-availabilities`, {
+        method: "POST",
+        body: JSON.stringify({
+          teacherId,
+          weekday,
+          startTime: `${startTime}:00`,
+          endTime: `${endTime}:00`,
+          slotMinutes: 60, // ✅ 고정
+          isActive: true,
+          deviceType,
+          effectiveFrom,
+          effectiveUntil,
+        }),
+      });
 
-        // ✅ 고정
-        slotMinutes: 60,
-
-        deviceType,
-        isActive: true,
-
-        effectiveFrom,
-        effectiveUntil,
-      }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      alert(data.error ?? "추가 실패");
-      return;
+      await loadAvailabilities(teacherId);
+    } catch (e: any) {
+      alert(e?.message ?? "추가 실패");
     }
-    await loadAvailabilities(teacherId);
   };
 
+  // --------------------------
+  // Toggle active (USE ADMIN ROUTE PATCH)
+  // --------------------------
   const toggleActive = async (id: string, next: boolean) => {
-    const res = await authFetch("/api/admin/teacher-availabilities", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, isActive: next }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      alert(data.error ?? "토글 실패");
-      return;
+    if (!(await ensureLoggedIn())) return;
+
+    try {
+      await adminFetch(`/api/admin/teacher-availabilities`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          isActive: next,
+        }),
+      });
+
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, is_active: next } : r)));
+    } catch (e: any) {
+      alert(e?.message ?? "토글 실패");
     }
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, is_active: next } : r)));
   };
 
+  // --------------------------
+  // Remove row (USE ADMIN ROUTE DELETE)
+  // --------------------------
   const removeRow = async (id: string) => {
     if (!confirm("삭제할까요?")) return;
+    if (!(await ensureLoggedIn())) return;
 
-    const res = await authFetch("/api/admin/teacher-availabilities", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      alert(data.error ?? "삭제 실패");
-      return;
+    try {
+      await adminFetch(`/api/admin/teacher-availabilities`, {
+        method: "DELETE",
+        body: JSON.stringify({ id }),
+      });
+
+      setRows((prev) => prev.filter((r) => r.id !== id));
+    } catch (e: any) {
+      alert(e?.message ?? "삭제 실패");
     }
-    setRows((prev) => prev.filter((r) => r.id !== id));
   };
 
   const selectedTeacherName = useMemo(() => {
     return teachers.find((t) => t.id === teacherId)?.name ?? "(이름 없음)";
   }, [teachers, teacherId]);
 
-  // ✅ endTime 옵션은 startTime 이후만 보여주면 실수 줄어듦
   const endTimeOptions = useMemo(() => {
     const s = toMin(startTime);
     return HOUR_OPTIONS.filter((t) => toMin(t) > s);
@@ -269,7 +338,6 @@ export default function AdminTeachersPage() {
             ))}
           </select>
 
-          {/* ✅ 시간은 셀렉트 */}
           <label style={{ color: "#111" }}>
             시작{" "}
             <select
@@ -316,7 +384,7 @@ export default function AdminTeachersPage() {
 
           <select
             value={deviceType}
-            onChange={(e) => setDeviceType(e.target.value as any)}
+            onChange={(e) => setDeviceType(e.target.value as DeviceType)}
             style={{
               padding: 10,
               borderRadius: 10,
@@ -330,7 +398,6 @@ export default function AdminTeachersPage() {
             <option value="turntable">턴테이블</option>
           </select>
 
-          {/* ✅ 기간(캘린더) */}
           <label style={{ color: "#111" }}>
             기간 시작{" "}
             <input
@@ -379,9 +446,7 @@ export default function AdminTeachersPage() {
           </button>
         </div>
 
-        <p style={{ color: "#666", marginTop: 8 }}>
-          * slotMinutes는 현재 60분으로 고정이에요.
-        </p>
+        <p style={{ color: "#666", marginTop: 8 }}>* slotMinutes는 현재 60분으로 고정이에요.</p>
 
         <hr style={{ margin: "18px 0", borderColor: "#eee" }} />
 

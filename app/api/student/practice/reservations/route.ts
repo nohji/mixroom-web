@@ -1,0 +1,88 @@
+import { NextResponse } from "next/server";
+import { requireStudent } from "@/lib/requireStudent";
+import { supabaseServer } from "@/lib/supabaseServer";
+
+type Body = {
+  room_id?: string;
+  date?: string; // YYYY-MM-DD
+  times?: string[]; // ["13:00","14:00"]
+  device_type?: string; // optional (현재 테이블 컬럼 없어도 OK)
+};
+
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status });
+}
+
+function isValidTimeFormat(t: string) {
+  return /^\d{2}:\d{2}$/.test(String(t ?? ""));
+}
+function isValidYmd(s: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ""));
+}
+
+// ✅ KST 기준 today (UTC로 인해 하루 밀리는 문제 방지)
+function todayYmdKST() {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10);
+}
+
+export async function POST(req: Request) {
+  const guard = await requireStudent();
+  if (!guard.ok) return json({ error: guard.error }, guard.status);
+
+  const body = (await req.json().catch(() => ({}))) as Body;
+
+  const room_id = String(body.room_id ?? "").trim();
+  const date = String(body.date ?? "").trim();
+  const times = Array.isArray(body.times) ? body.times.map((x) => String(x).trim()) : [];
+  const device_type = String(body.device_type ?? "controller").trim();
+
+  // ===== 기본 유효성 =====
+  if (!room_id) return json({ error: "ROOM_REQUIRED" }, 400);
+  if (!date || !isValidYmd(date)) return json({ error: "DATE_REQUIRED" }, 400);
+  if (times.length === 0) return json({ error: "TIME_REQUIRED" }, 400);
+
+  // ===== 날짜 과거 금지 (KST 기준) =====
+  if (date < todayYmdKST()) return json({ error: "PAST_DATE_NOT_ALLOWED" }, 400);
+
+  // ===== 시간 개수 제한 =====
+  if (times.length > 2) return json({ error: "MAX_2_HOURS" }, 400);
+
+  // ===== 시간 포맷 & 중복 체크 =====
+  const uniqueTimes = Array.from(new Set(times));
+  if (uniqueTimes.length !== times.length) return json({ error: "DUPLICATE_TIME" }, 400);
+
+  for (const t of times) {
+    if (!isValidTimeFormat(t)) return json({ error: "INVALID_TIME_FORMAT" }, 400);
+  }
+
+  // ===== 오늘 이미 예약된 개수 확인 (1차 방어) =====
+  const { data: existing, error: exErr } = await supabaseServer
+    .from("practice_reservations")
+    .select("id")
+    .eq("student_id", guard.studentUserId)
+    .eq("date", date)
+    .eq("status", "reserved");
+
+  if (exErr) return json({ error: exErr.message }, 500);
+
+  const reservedCount = existing?.length ?? 0;
+  if (reservedCount + times.length > 2) return json({ error: "DAILY_LIMIT_EXCEEDED" }, 400);
+
+  // ===== RPC 호출 =====
+  const { data, error } = await supabaseServer.rpc("practice_create_reservations", {
+    p_student_id: guard.studentUserId,
+    p_room_id: room_id,
+    p_date: date,
+    p_times: times,
+    p_device_type: device_type, // 현재 테이블에 컬럼 없어도 RPC 파라미터로는 OK
+  });
+
+  if (error) {
+    // RPC raise exception 메시지 그대로 내려감
+    return json({ error: error.message }, 400);
+  }
+
+  return json({ ok: true, rows: data ?? [] });
+}
