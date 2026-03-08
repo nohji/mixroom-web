@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayoutShell from "@/components/admin/AdminLayoutShell";
 import { authFetch } from "@/lib/authFetch";
-import { ui, pageTitle, sectionTitle, mutedText } from "@/styles/ui";
+import { ui, sectionTitle, mutedText } from "@/styles/ui";
 
 type UserRow = {
   id: string;
@@ -12,6 +12,11 @@ type UserRow = {
   phone: string | null;
   must_change_password: boolean;
   created_at: string | null;
+
+  // 휴면 관리
+  is_active: boolean;
+  deactivated_at: string | null;
+  deactivated_reason?: string | null;
 };
 
 function normalizePhone(input: string) {
@@ -19,6 +24,7 @@ function normalizePhone(input: string) {
 }
 
 type MustChangeFilter = "all" | "must" | "done";
+type ActiveFilter = "all" | "active" | "inactive";
 
 export default function AdminUsersPage() {
   // 생성 폼
@@ -34,24 +40,26 @@ export default function AdminUsersPage() {
   // 필터
   const [q, setQ] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "student" | "teacher" | "admin">("all");
-  const [mustFilter, setMustFilter] = useState<MustChangeFilter>("all"); // ✅ 추가
+  const [mustFilter, setMustFilter] = useState<MustChangeFilter>("all");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
 
   const load = async () => {
     setLoading(true);
+
     const qs = new URLSearchParams();
     if (q.trim()) qs.set("q", q.trim());
     qs.set("role", roleFilter);
-    // ✅ 서버가 이 파라미터를 지원하지 않아도 문제없게 "프론트 필터"로 처리할거라 굳이 안보내도 됨
-    // qs.set("must", mustFilter);
 
     const res = await authFetch(`/api/admin/list-users?${qs.toString()}`);
     const data = await res.json().catch(() => ({}));
+
     if (!res.ok) {
       alert(data.error ?? "사용자 목록 조회 실패");
       setRows([]);
     } else {
       setRows((data.rows ?? []) as UserRow[]);
     }
+
     setLoading(false);
   };
 
@@ -62,12 +70,23 @@ export default function AdminUsersPage() {
 
   const createUser = async () => {
     setCreateMsg("");
+
     const phoneDigits = normalizePhone(phone);
 
-    if (!name.trim()) return setCreateMsg("이름을 입력해줘!");
-    if (!phoneDigits) return setCreateMsg("휴대폰 번호를 입력해줘!");
-    if (phoneDigits.length < 10 || phoneDigits.length > 11)
-      return setCreateMsg("휴대폰 번호는 10~11자리!");
+    if (!name.trim()) {
+      setCreateMsg("이름을 입력해줘!");
+      return;
+    }
+
+    if (!phoneDigits) {
+      setCreateMsg("휴대폰 번호를 입력해줘!");
+      return;
+    }
+
+    if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+      setCreateMsg("휴대폰 번호는 10~11자리!");
+      return;
+    }
 
     const res = await authFetch("/api/admin/create-user", {
       method: "POST",
@@ -79,6 +98,7 @@ export default function AdminUsersPage() {
     });
 
     const data = await res.json().catch(() => ({}));
+
     if (!res.ok) {
       setCreateMsg(data.error ?? "생성 실패");
       return;
@@ -91,24 +111,71 @@ export default function AdminUsersPage() {
     await load();
   };
 
-  // ✅ must_change_password 필터는 프론트에서 적용 (서버 수정 없이 바로 동작)
+  const toggleActive = async (id: string, next: boolean) => {
+    const ok = confirm(
+      next
+        ? "이 계정을 다시 활성화할까요?"
+        : "이 계정을 휴면 처리할까요?\n휴면 처리 시 로그인과 주요 기능 사용이 제한됩니다."
+    );
+    if (!ok) return;
+
+    const res = await authFetch("/api/admin/users/activate", {
+      method: "PATCH",
+      body: JSON.stringify({
+        userId: id,
+        isActive: next,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.error ?? "상태 변경 실패");
+      return;
+    }
+
+    await load();
+  };
+
   const filteredRows = useMemo(() => {
-    if (mustFilter === "all") return rows;
-    if (mustFilter === "must") return rows.filter((r) => r.must_change_password);
-    return rows.filter((r) => !r.must_change_password);
-  }, [rows, mustFilter]);
+    let list = rows;
+
+    if (mustFilter === "must") {
+      list = list.filter((r) => r.must_change_password);
+    } else if (mustFilter === "done") {
+      list = list.filter((r) => !r.must_change_password);
+    }
+
+    if (activeFilter === "active") {
+      list = list.filter((r) => r.is_active);
+    } else if (activeFilter === "inactive") {
+      list = list.filter((r) => !r.is_active);
+    }
+
+    return list;
+  }, [rows, mustFilter, activeFilter]);
 
   const stats = useMemo(() => {
     const students = rows.filter((r) => r.role === "student").length;
     const teachers = rows.filter((r) => r.role === "teacher").length;
     const admins = rows.filter((r) => r.role === "admin").length;
     const mustChange = rows.filter((r) => r.must_change_password).length;
-    return { students, teachers, admins, mustChange };
+    const active = rows.filter((r) => r.is_active).length;
+    const inactive = rows.filter((r) => !r.is_active).length;
+
+    return {
+      students,
+      teachers,
+      admins,
+      mustChange,
+      active,
+      inactive,
+    };
   }, [rows]);
 
   return (
     <AdminLayoutShell title="사용자 등록/관리">
-      <div style={{ maxWidth: 980, padding: 0 }}>
+      <div style={{ maxWidth: 1100, padding: 0 }}>
         {/* 등록 폼 */}
         <section style={ui.card}>
           <h3 style={sectionTitle}>사용자 생성</h3>
@@ -129,7 +196,11 @@ export default function AdminUsersPage() {
               style={{ ...ui.input, minWidth: 240 }}
             />
 
-            <select value={role} onChange={(e) => setRole(e.target.value as any)} style={ui.select}>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as "student" | "teacher" | "admin")}
+              style={ui.select}
+            >
               <option value="student">수강생</option>
               <option value="teacher">강사</option>
               <option value="admin">관리자</option>
@@ -152,9 +223,9 @@ export default function AdminUsersPage() {
         <section style={{ marginTop: 16 }}>
           <div style={ui.card}>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ color: "#111", fontWeight: 800 }}>
-                현황: 수강생 {stats.students} / 강사 {stats.teachers} / 관리자 {stats.admins} / 최초비번미변경{" "}
-                {stats.mustChange}
+              <div style={{ color: "#111", fontWeight: 800, lineHeight: 1.5 }}>
+                현황: 수강생 {stats.students} / 강사 {stats.teachers} / 관리자 {stats.admins} / 활성{" "}
+                {stats.active} / 휴면 {stats.inactive} / 최초비번미변경 {stats.mustChange}
               </div>
 
               <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -167,7 +238,7 @@ export default function AdminUsersPage() {
 
                 <select
                   value={roleFilter}
-                  onChange={(e) => setRoleFilter(e.target.value as any)}
+                  onChange={(e) => setRoleFilter(e.target.value as "all" | "student" | "teacher" | "admin")}
                   style={ui.select}
                 >
                   <option value="all">전체 역할</option>
@@ -176,7 +247,16 @@ export default function AdminUsersPage() {
                   <option value="admin">관리자</option>
                 </select>
 
-                {/* ✅ 추가: 최초비번 변경 여부 필터 */}
+                <select
+                  value={activeFilter}
+                  onChange={(e) => setActiveFilter(e.target.value as ActiveFilter)}
+                  style={ui.select}
+                >
+                  <option value="all">계정 상태: 전체</option>
+                  <option value="active">활성만</option>
+                  <option value="inactive">휴면만</option>
+                </select>
+
                 <select
                   value={mustFilter}
                   onChange={(e) => setMustFilter(e.target.value as MustChangeFilter)}
@@ -203,11 +283,13 @@ export default function AdminUsersPage() {
                   <table style={ui.table}>
                     <thead>
                       <tr>
-                        {["이름", "역할", "휴대폰", "최초비번변경", "생성일", "id"].map((h) => (
-                          <th key={h} style={ui.th}>
-                            {h}
-                          </th>
-                        ))}
+                        {["이름", "역할", "휴대폰", "상태", "최초비번변경", "생성일", "휴면일", "관리", "id"].map(
+                          (h) => (
+                            <th key={h} style={ui.th}>
+                              {h}
+                            </th>
+                          )
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -216,6 +298,15 @@ export default function AdminUsersPage() {
                           <td style={ui.td}>{r.name ?? "-"}</td>
                           <td style={ui.td}>{r.role}</td>
                           <td style={ui.td}>{r.phone ?? "-"}</td>
+
+                          <td style={ui.td}>
+                            {r.is_active ? (
+                              <span style={ui.badgeSuccess}>활성</span>
+                            ) : (
+                              <span style={ui.badgeWarn}>휴면</span>
+                            )}
+                          </td>
+
                           <td style={ui.td}>
                             {r.must_change_password ? (
                               <span style={ui.badgeWarn}>미변경</span>
@@ -223,7 +314,19 @@ export default function AdminUsersPage() {
                               <span style={ui.badgeSuccess}>완료</span>
                             )}
                           </td>
+
                           <td style={ui.td}>{r.created_at ? r.created_at.slice(0, 10) : "-"}</td>
+                          <td style={ui.td}>{r.deactivated_at ? r.deactivated_at.slice(0, 10) : "-"}</td>
+
+                          <td style={ui.td}>
+                            <button
+                              onClick={() => toggleActive(r.id, !r.is_active)}
+                              style={ui.buttonSubtle}
+                            >
+                              {r.is_active ? "비활성화" : "활성화"}
+                            </button>
+                          </td>
+
                           <td style={{ ...ui.td, fontSize: 12, color: "#555" }}>{r.id}</td>
                         </tr>
                       ))}
@@ -233,7 +336,8 @@ export default function AdminUsersPage() {
               )}
 
               <div style={{ marginTop: 8, ...mutedText }}>
-                ※ “최초비번 변경 여부” 필터는 지금은 프론트에서만 필터링해요(서버 수정 없이 즉시 적용).
+                ※ “최초비번 변경 여부”, “계정 상태” 필터는 현재 프론트에서만 필터링해요. <br />
+                ※ 휴면 계정은 로그인과 주요 기능 사용이 제한되도록 서버/API 쪽에서도 함께 막아주는 게 좋아요.
               </div>
             </div>
           </div>

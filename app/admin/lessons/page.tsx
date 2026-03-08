@@ -790,7 +790,7 @@ export default function AdminLessonsHallSheetPage() {
           {/* Sticky headers */}
           <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#fff" }}>
             {/* Header row 1: Day */}
-            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #eee" }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "2px solid #eee" }}>
               <div
                 style={{
                   position: "sticky",
@@ -848,7 +848,7 @@ export default function AdminLessonsHallSheetPage() {
             </div>
 
             {/* Header row 2: Rooms */}
-            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #eee" }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #d1d5db" }}>
               <div style={{ position: "sticky", left: 0, zIndex: 60, height: 40, background: "#fff", borderRight: "1px solid #eee" }} />
 
               <div
@@ -911,8 +911,8 @@ export default function AdminLessonsHallSheetPage() {
                   gridColumn: 1,
                   gridRow: rIdx + 1,
                   background: "#fff",
-                  borderRight: "1px solid #eee",
-                  borderBottom: "1px solid #f3f3f3",
+                  borderRight: "2px solid #d1d5db",
+                  borderBottom: "2px solid #d1d5db",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -940,8 +940,8 @@ export default function AdminLessonsHallSheetPage() {
                     gridColumn: 2,
                     gridRow: rIdx + 1,
                     background: "#fff",
-                    borderRight: "1px solid #eee",
-                    borderBottom: "1px solid #f3f3f3",
+                    borderRight: "2px solid #d1d5db",
+                    borderBottom: "2px solid #d1d5db",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -1034,8 +1034,8 @@ export default function AdminLessonsHallSheetPage() {
                     style={{
                       gridColumn: cIdx + 3,
                       gridRow: rIdx + 1,
-                      borderBottom: "1px solid #f3f3f3",
-                      borderRight: "1px solid #f3f3f3",
+                      borderBottom: "2px solid #d1d5db",
+                      borderRight: "2px solid #d1d5db",
                       background: isSelectedDay ? "#f7f7f7" : rIdx % 2 === 0 ? "#fff" : "#fcfcfc",
                     }}
                   />

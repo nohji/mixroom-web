@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
 import StudentTopNav from "@/components/student/StudentTopNav";
 
@@ -52,21 +52,17 @@ function mapPracticeError(code: string) {
   if (!code) return "예약에 실패했습니다.";
 
   if (code.includes("NO_VOUCHER")) {
-    return "사용 가능한 연습실 이용권이 없거나, 선택한 날짜에 사용할 수 없습니다.";
+    return "현재 사용 가능한 연습실 이용권이 없습니다. 추가 이용권이 필요하시면 카카오톡 채널로 문의해 주세요.";
   }
-
   if (code.includes("DAILY_LIMIT_EXCEEDED")) {
     return "하루 최대 2시간까지만 예약할 수 있어요.";
   }
-
   if (code.includes("SLOT_ALREADY_RESERVED")) {
     return "이미 예약된 시간입니다.";
   }
-
   if (code.includes("CONFLICT_WITH_LESSON")) {
     return "해당 시간에는 수업이 있어 예약할 수 없습니다.";
   }
-
   if (code.includes("CANCEL_DEADLINE_PASSED")) {
     return "취소 가능 기간이 지나 취소할 수 없습니다.";
   }
@@ -80,7 +76,6 @@ function canCancelBy48Hours(dateStr: string, startHHMM: string) {
   const [hh, mm] = String(startHHMM ?? "00:00").split(":").map(Number);
   d.setHours(hh ?? 0, mm ?? 0, 0, 0);
 
-  // KST 가정(브라우저 로컬이 KST라면 OK). 서버에서 최종 판단하므로 UI는 가이드용.
   const deadline = new Date(d.getTime() - 48 * 60 * 60 * 1000);
   return new Date() < deadline;
 }
@@ -94,7 +89,7 @@ type ReservationRow = {
   start_time: string;
   end_time: string;
   status: string; // PENDING/APPROVED/REJECTED/CANCELED/COMPLETED
-  room_name?: string | null; // schedule api에서 room_name 주고 있길래 유지
+  room_name?: string | null;
   rejected_reason?: string | null;
   approved_at?: string | null;
 };
@@ -119,6 +114,22 @@ function statusBadge(status: string) {
   return { label: s, bg: "#e5e7eb", fg: "#111" };
 }
 
+type VoucherSummary = {
+  today?: string;
+  remaining_hours: number;
+  usable_until: string | null;
+  usable_from?: string | null;
+  has_voucher?: boolean;
+  active_voucher_ids?: string[];
+};
+
+function inRangeDate(d: string, from?: string | null, to?: string | null) {
+  if (!d) return false;
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+}
+
 export default function PracticeStudentPage() {
   const [weekStart, setWeekStart] = useState(() => ymd(startOfWeek(new Date())));
   const [selectedDate, setSelectedDate] = useState(() => ymd(new Date()));
@@ -127,19 +138,18 @@ export default function PracticeStudentPage() {
   const [rooms, setRooms] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
   const [reservations, setReservations] = useState<ReservationRow[]>([]);
-  const [me, setMe] = useState<string>("");
+  const [myVoucherReservations, setMyVoucherReservations] = useState<ReservationRow[]>([]);
 
+  const [listVisibleCount, setListVisibleCount] = useState(10);
+
+  const [me, setMe] = useState<string>("");
   const [pickedTimes, setPickedTimes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [voucherSummary, setVoucherSummary] = useState<{
-    today?: string;
-    remaining_hours: number;
-    usable_until: string | null;
-    usable_from?: string | null;
-  } | null>(null);
-
+  const [voucherSummary, setVoucherSummary] = useState<VoucherSummary | null>(null);
   const [policy, setPolicy] = useState<{ daily_limit_hours: number } | null>(null);
+
+  const reservationListRef = useRef<HTMLDivElement | null>(null);
 
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
   const showToast = useCallback((msg: string, kind: ToastKind = "ok") => {
@@ -158,12 +168,30 @@ export default function PracticeStudentPage() {
   const weekFrom = useMemo(() => ymd(weekDays[0]), [weekDays]);
   const weekTo = useMemo(() => ymd(weekDays[6]), [weekDays]);
 
+  const voucherFrom = useMemo(() => voucherSummary?.usable_from ?? null, [voucherSummary]);
+  const voucherTo = useMemo(() => voucherSummary?.usable_until ?? null, [voucherSummary]);
+
   const isUpcomingVoucher = useMemo(() => {
     const t = voucherSummary?.today;
-    const vf = (voucherSummary as any)?.usable_from as string | null | undefined;
+    const vf = voucherSummary?.usable_from ?? null;
     if (!t || !vf) return false;
     return t < vf;
   }, [voucherSummary]);
+
+  const hasVoucher = useMemo(() => {
+    if (typeof voucherSummary?.has_voucher === "boolean") {
+      return voucherSummary.has_voucher;
+    }
+    return !!(voucherSummary?.usable_from || voucherSummary?.usable_until);
+  }, [voucherSummary]);
+  
+  const isVoucherEmpty = useMemo(() => {
+    return hasVoucher && (voucherSummary?.remaining_hours ?? 0) <= 0;
+  }, [hasVoucher, voucherSummary]);
+  
+  const canReserveByVoucher = useMemo(() => {
+    return !isVoucherEmpty;
+  }, [isVoucherEmpty]);
 
   useEffect(() => {
     const sd = parseYmd(selectedDate);
@@ -173,55 +201,7 @@ export default function PracticeStudentPage() {
       setSelectedDate(weekFrom);
       setPickedTimes([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekFrom, weekTo]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await authFetch(`/api/student/practice/schedule?from=${weekFrom}&to=${weekTo}`);
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      showToast(json.error ?? "연습실 스케줄 조회 실패", "err");
-      setRooms([]);
-      setLessons([]);
-      setReservations([]);
-      setMe("");
-      setVoucherSummary(null);
-      setPolicy(null);
-      setLoading(false);
-      return;
-    }
-
-    setRooms(json.rooms ?? []);
-    setLessons(json.lessons ?? []);
-    setReservations((json.reservations ?? []) as ReservationRow[]);
-    setMe(String(json?.me?.student_id ?? ""));
-    setVoucherSummary(json.voucher_summary ?? null);
-    setPolicy(json.policy ?? null);
-    setLoading(false);
-  }, [weekFrom, weekTo, showToast]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // 포커스/복귀 시 새로고침
-  useEffect(() => {
-    const onFocus = () => load();
-    const onVisible = () => document.visibilityState === "visible" && load();
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [load]);
-
-  // ✅ 폴링(관리자 승인/거절 반영 빠르게)
-  useEffect(() => {
-    const t = window.setInterval(() => load(), 10000); // 10초
-    return () => window.clearInterval(t);
-  }, [load]);
+  }, [selectedDate, weekFrom, weekTo]);
 
   function getSlots(date: Date) {
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
@@ -231,7 +211,65 @@ export default function PracticeStudentPage() {
     return arr;
   }
 
-  // ✅ "오늘 내 예약" 카운트: PENDING + APPROVED
+  const loadWeek = useCallback(async () => {
+    const res = await authFetch(`/api/student/practice/schedule?from=${weekFrom}&to=${weekTo}`);
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      showToast(json.error ?? "연습실 스케줄 조회 실패", "err");
+      setRooms([]);
+      setLessons([]);
+      setReservations([]);
+      setMyVoucherReservations([]);
+      setMe("");
+      setVoucherSummary(null);
+      setPolicy(null);
+      return { ok: false as const };
+    }
+
+    setRooms(json.rooms ?? []);
+    setLessons(json.lessons ?? []);
+    setReservations((json.reservations ?? []) as ReservationRow[]);
+    setMyVoucherReservations((json.my_reservations_in_voucher ?? []) as ReservationRow[]);
+    setMe(String(json?.me?.student_id ?? ""));
+    setVoucherSummary((json.voucher_summary ?? null) as VoucherSummary | null);
+    setPolicy(json.policy ?? null);
+    setListVisibleCount(10);
+
+    console.log("json.my_reservations_in_voucher", json.my_reservations_in_voucher);
+console.log("json.voucher_summary", json.voucher_summary);
+
+    return { ok: true as const };
+  }, [weekFrom, weekTo, showToast]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    await loadWeek();
+    setLoading(false);
+  }, [loadWeek]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    const onFocus = () => load();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    const t = window.setInterval(() => load(), 10000);
+    return () => window.clearInterval(t);
+  }, [load]);
+
   const myActiveCountToday = useMemo(() => {
     return reservations.filter(
       (r) => r.student_id === me && r.date === selectedDate && isActiveReservationStatus(r.status)
@@ -248,7 +286,6 @@ export default function PracticeStudentPage() {
     );
     if (lessonBlock) return { kind: "lesson" as const };
 
-    // ✅ 슬롯 점유: PENDING + APPROVED 둘 다 점유 처리
     const resv = reservations.find(
       (r) =>
         r.date === dateStr &&
@@ -269,10 +306,19 @@ export default function PracticeStudentPage() {
     const st = slotStatus(selectedDate, t, selectedRoom);
     if (st.kind !== "free") return;
 
+    if (!inRangeDate(selectedDate, voucherFrom, voucherTo)) {
+      showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
+      return;
+    }
+
+    if (isVoucherEmpty) {
+      showToast("무료 제공된 연습실 이용 시간이 모두 사용되었습니다. 추가 이용권은 카카오톡 채널로 문의해 주세요.", "warn");
+      return;
+    }
+
     const exists = pickedTimes.includes(t);
     const next = exists ? pickedTimes.filter((x) => x !== t) : [...pickedTimes, t];
 
-    // ✅ 하루 최대 2시간: (이미 예약된 내 예약(PENDING+APPROVED)) + (현재 선택)
     const totalIfApply = myActiveCountToday + next.length;
     if (!exists && totalIfApply > 2) {
       showToast("하루 최대 2시간(연속/비연속)만 예약할 수 있어요.", "warn");
@@ -284,6 +330,16 @@ export default function PracticeStudentPage() {
 
   async function reserve() {
     if (pickedTimes.length === 0) return;
+
+    if (!inRangeDate(selectedDate, voucherFrom, voucherTo)) {
+      showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
+      return;
+    }
+
+    if (isVoucherEmpty) {
+      showToast("무료 제공된 연습실 이용 시간이 모두 사용되었습니다. 추가 이용권은 카카오톡 채널로 문의해 주세요.", "warn");
+      return;
+    }
 
     const roomObj = rooms.find((r) => normalizeRoom(r.name) === selectedRoom);
     if (!roomObj) {
@@ -307,14 +363,16 @@ export default function PracticeStudentPage() {
       return;
     }
 
-    // ✅ 이제는 “예약 확정”이 아니라 “승인 대기”가 맞음
     showToast("신청 완료! 관리자 승인 후 확정됩니다.", "ok");
     setPickedTimes([]);
     await load();
+
+    setTimeout(() => {
+      reservationListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
   }
 
   async function cancel(id: string, dateStr: string, startHHMM: string) {
-    // ✅ 프론트 안내용 48시간 체크 (서버가 최종 판단)
     const canCancel = canCancelBy48Hours(dateStr, startHHMM);
     if (!canCancel) {
       showToast("48시간 전부터는 취소할 수 없습니다.", "warn");
@@ -324,8 +382,11 @@ export default function PracticeStudentPage() {
     const ok = confirm("예약을 취소할까요?");
     if (!ok) return;
 
-    const res = await authFetch(`/api/student/practice/reservations/${id}/cancel`, { method: "POST" });
+    const res = await authFetch(`/api/student/practice/reservations/${id}/cancel`, {
+      method: "POST",
+    });
     const json = await res.json().catch(() => ({}));
+
     if (!res.ok) {
       showToast(String(json.message ?? json.error ?? "취소 실패"), "err");
       return;
@@ -341,26 +402,30 @@ export default function PracticeStudentPage() {
     setWeekStart(ymd(startOfWeek(d)));
     setPickedTimes([]);
   };
+
   const goNextWeek = () => {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setWeekStart(ymd(startOfWeek(d)));
     setPickedTimes([]);
   };
+
   const goThisWeek = () => {
     setWeekStart(ymd(startOfWeek(new Date())));
     setSelectedDate(ymd(new Date()));
     setPickedTimes([]);
   };
 
-  // 이번주 내 예약 리스트(모든 상태 표시하되 정렬)
-  const myWeekReservations = useMemo(() => {
-    return reservations
-      .filter((r) => r.student_id === me)
-      .filter((r) => r.date >= weekFrom && r.date <= weekTo)
-      .filter((r) => String(r.status).toUpperCase() !== "CANCELED")
-      .sort((a, b) => (a.date !== b.date ? a.date.localeCompare(b.date) : a.start_time.localeCompare(b.start_time)));
-  }, [reservations, me, weekFrom, weekTo]);
+  const sortedVoucherReservations = useMemo(() => {
+    return [...myVoucherReservations].sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.start_time.localeCompare(b.start_time);
+    });
+  }, [myVoucherReservations]);
+
+  const visibleVoucherReservations = useMemo(() => {
+    return sortedVoucherReservations.slice(0, listVisibleCount);
+  }, [sortedVoucherReservations, listVisibleCount]);
 
   return (
     <div
@@ -374,11 +439,172 @@ export default function PracticeStudentPage() {
     >
       <StudentTopNav />
 
-      {/* Title */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ fontWeight: 1000, fontSize: 20, color: "#111" }}>연습실 예약</div>
         <div style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, color: "#111" }}>
           {loading ? "로딩중..." : `오늘 내 예약 ${myActiveCountToday}/2`}
+        </div>
+      </div>
+
+      {/* 예약 내역 상단 */}
+      <div ref={reservationListRef} style={{ marginTop: 12 }}>
+        <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 10 }}>
+          📌 현재 수강권 예약 내역 {voucherTo ? "" : ""}
+        </div>
+
+        <div
+          style={{
+            border: "1px solid #d7dbe0",
+            borderRadius: 14,
+            background: "#fff",
+            padding: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 1000, color: "#111" }}>
+              기간:{" "}
+              <b>
+                {voucherFrom && voucherTo ? `${voucherFrom} ~ ${voucherTo}` : voucherTo ? `~ ${voucherTo}` : "수강권 없음"}
+              </b>
+            </div>
+
+            <button onClick={load} style={btnPrimary()} disabled={loading}>
+              새로고침
+            </button>
+          </div>
+
+          {sortedVoucherReservations.length === 0 ? (
+            <div
+              style={{
+                marginTop: 10,
+                padding: 14,
+                borderRadius: 12,
+                background: "#f3f4f6",
+                border: "1px solid #e5e7eb",
+                color: "#111",
+                fontWeight: 900,
+              }}
+            >
+              예약 내역이 없어요 🙂
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                {visibleVoucherReservations.map((r) => {
+                  const badge = statusBadge(r.status);
+                  const active = isActiveReservationStatus(r.status);
+                  const canceled = isCanceledStatus(r.status);
+                  const rejected = isRejectedStatus(r.status);
+                  const canCancel = active && canCancelBy48Hours(r.date, clampHHMM(r.start_time));
+
+                  return (
+                    <div
+                      key={r.id}
+                      style={{
+                        padding: 14,
+                        borderRadius: 16,
+                        border: "1px solid #d7dbe0",
+                        background: canceled || rejected ? "#fff" : "#111",
+                        color: canceled || rejected ? "#111" : "#fff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 1100, color: canceled || rejected ? "#111" : "#fff" }}>
+                            {r.date} {clampHHMM(r.start_time)}
+                            {r.room_name ? (
+                              <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.9 }}>
+                                · {normalizeRoom(r.room_name)}홀
+                              </span>
+                            ) : null}
+                          </div>
+                          <span
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: 999,
+                              background: badge.bg,
+                              color: badge.fg,
+                              fontWeight: 1100,
+                              fontSize: 11,
+                            }}
+                          >
+                            {badge.label}
+                          </span>
+                        </div>
+
+                        {rejected && r.rejected_reason ? (
+                          <div style={{ fontSize: 12, fontWeight: 1000, marginTop: 6, color: "#ef4444" }}>
+                            사유: {r.rejected_reason}
+                          </div>
+                        ) : (
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 1000,
+                              marginTop: 6,
+                              color: canceled || rejected ? "#666" : "#eaeaea",
+                            }}
+                          >
+                            {String(r.status).toUpperCase() === "PENDING"
+                              ? "관리자 승인 후 확정됩니다."
+                              : active
+                              ? canCancel
+                                ? "취소 가능(48시간 전까지)"
+                                : "취소 마감(48시간 전)"
+                              : "—"}
+                          </div>
+                        )}
+                      </div>
+
+                      {active ? (
+                        <button
+                          disabled={!canCancel}
+                          onClick={() => cancel(r.id, r.date, clampHHMM(r.start_time))}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            border: active ? "1px solid rgba(255,255,255,0.35)" : "1px solid #ddd",
+                            background: canCancel ? "#ff4d4f" : active ? "rgba(255,255,255,0.18)" : "#fff",
+                            color: active ? "#fff" : "#111",
+                            fontWeight: 1100,
+                            cursor: canCancel ? "pointer" : "not-allowed",
+                            opacity: canCancel ? 1 : 0.65,
+                          }}
+                          title={!canCancel ? "48시간 전부터는 취소할 수 없어요." : "예약 취소"}
+                        >
+                          취소
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 12, fontWeight: 1100, color: canceled || rejected ? "#999" : "#fff" }}>
+                          —
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {sortedVoucherReservations.length > listVisibleCount ? (
+                <button
+                  onClick={() => setListVisibleCount((n) => n + 10)}
+                  style={{
+                    ...btnGhost(),
+                    width: "100%",
+                    marginTop: 12,
+                    padding: "12px 12px",
+                    borderRadius: 14,
+                    fontWeight: 1100,
+                  }}
+                >
+                  더보기 ({listVisibleCount}/{sortedVoucherReservations.length})
+                </button>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
@@ -399,13 +625,13 @@ export default function PracticeStudentPage() {
               padding: "6px 10px",
               borderRadius: 999,
               border: "1px solid #d7dbe0",
-              background: (voucherSummary?.remaining_hours ?? 0) > 0 ? "#111" : "#eef1f4",
-              color: (voucherSummary?.remaining_hours ?? 0) > 0 ? "#fff" : "#111",
+              background: !hasVoucher ? "#eef1f4" : isVoucherEmpty ? "#fff7ed" : "#111",
+              color: !hasVoucher ? "#111" : isVoucherEmpty ? "#9a3412" : "#fff",
               fontWeight: 1100,
               fontSize: 12,
             }}
           >
-            {(voucherSummary?.remaining_hours ?? 0) > 0 ? "사용 가능" : "없음"}
+            {!hasVoucher ? "이용권 없음" : isVoucherEmpty ? "전부 소진" : "사용 가능"}
           </span>
         </div>
 
@@ -476,10 +702,17 @@ export default function PracticeStudentPage() {
             const isSel = selectedDate === dateStr;
             const isToday = dateStr === ymd(new Date());
 
+            const outOfVoucher = !inRangeDate(dateStr, voucherFrom, voucherTo);
+            const opacity = outOfVoucher ? 0.55 : 1;
+
             return (
               <button
                 key={dateStr}
                 onClick={() => {
+                  if (outOfVoucher) {
+                    showToast("수강권 기간 밖의 날짜입니다.", "warn");
+                    return;
+                  }
                   setSelectedDate(dateStr);
                   setPickedTimes([]);
                 }}
@@ -491,9 +724,11 @@ export default function PracticeStudentPage() {
                   background: isSel ? "#111" : "#fff",
                   color: isSel ? "#fff" : "#111",
                   fontWeight: 1000,
-                  cursor: "pointer",
+                  cursor: outOfVoucher ? "not-allowed" : "pointer",
                   textAlign: "left",
+                  opacity,
                 }}
+                title={outOfVoucher ? "수강권(무료 제공 기간) 밖의 날짜입니다." : dateStr}
               >
                 <div style={{ fontSize: 12, fontWeight: 1000, color: isSel ? "#fff" : "#111", opacity: isSel ? 1 : 0.85 }}>
                   {DOW[d.getDay()]} {isToday ? "· 오늘" : ""}
@@ -546,7 +781,6 @@ export default function PracticeStudentPage() {
             const st = slotStatus(selectedDate, t, selectedRoom);
             const picked = pickedTimes.includes(t);
 
-            // ✅ 추가: 내 예약이면서 APPROVED(확정)면 시간표에서 숨김
             if (st.kind === "mine" && String(st.resv.status).toUpperCase() === "APPROVED") {
               return null;
             }
@@ -566,7 +800,7 @@ export default function PracticeStudentPage() {
               return (
                 <div key={t} style={{ ...baseCard, background: "#f0f2f5", border: "2px dashed rgba(0,0,0,0.35)" }}>
                   <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
-                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>레슨(점유)</div>
+                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약 마감</div>
                 </div>
               );
             }
@@ -575,7 +809,7 @@ export default function PracticeStudentPage() {
               return (
                 <div key={t} style={{ ...baseCard, background: "#e9edf2" }}>
                   <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
-                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약됨</div>
+                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약 마감</div>
                 </div>
               );
             }
@@ -674,123 +908,6 @@ export default function PracticeStudentPage() {
         )}
       </div>
 
-      {/* ==========================
-          내 예약 목록 (이번주)
-      ========================== */}
-      <div style={{ marginTop: 28 }}>
-        <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 12 }}>📌 내 예약 목록 (이번주)</div>
-
-        {myWeekReservations.length === 0 ? (
-          <div
-            style={{
-              padding: 16,
-              borderRadius: 14,
-              background: "#fff",
-              border: "1px solid #d7dbe0",
-              color: "#111",
-              fontWeight: 900,
-            }}
-          >
-            이번주 예약이 없어요 🙂
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 10 }}>
-            {myWeekReservations.map((r) => {
-              const badge = statusBadge(r.status);
-              const active = isActiveReservationStatus(r.status);
-              const canceled = isCanceledStatus(r.status);
-              const rejected = isRejectedStatus(r.status);
-
-              const canCancel = active && canCancelBy48Hours(r.date, clampHHMM(r.start_time));
-
-              return (
-                <div
-                  key={r.id}
-                  style={{
-                    padding: 14,
-                    borderRadius: 16,
-                    border: "1px solid #d7dbe0",
-                    background: canceled || rejected ? "#fff" : "#111",
-                    color: canceled || rejected ? "#111" : "#fff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                  }}
-                >
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 1100, color: canceled || rejected ? "#111" : "#fff" }}>
-                        {r.date} {clampHHMM(r.start_time)}
-                      </div>
-                      <span
-                        style={{
-                          padding: "4px 8px",
-                          borderRadius: 999,
-                          background: badge.bg,
-                          color: badge.fg,
-                          fontWeight: 1100,
-                          fontSize: 11,
-                        }}
-                      >
-                        {badge.label}
-                      </span>
-                    </div>
-
-                    {rejected && r.rejected_reason ? (
-                      <div style={{ fontSize: 12, fontWeight: 1000, marginTop: 6, color: "#ef4444" }}>
-                        사유: {r.rejected_reason}
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 1000,
-                          marginTop: 6,
-                          color: canceled || rejected ? "#666" : "#eaeaea",
-                        }}
-                      >
-                        {String(r.status).toUpperCase() === "PENDING"
-                          ? "관리자 승인 후 확정됩니다."
-                          : active
-                          ? canCancel
-                            ? "취소 가능(48시간 전까지)"
-                            : "취소 마감(48시간 전)"
-                          : "—"}
-                      </div>
-                    )}
-                  </div>
-
-                  {active ? (
-                    <button
-                      disabled={!canCancel}
-                      onClick={() => cancel(r.id, r.date, clampHHMM(r.start_time))}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: active ? "1px solid rgba(255,255,255,0.35)" : "1px solid #ddd",
-                        background: canCancel ? "#ff4d4f" : active ? "rgba(255,255,255,0.18)" : "#fff",
-                        color: active ? "#fff" : "#111",
-                        fontWeight: 1100,
-                        cursor: canCancel ? "pointer" : "not-allowed",
-                        opacity: canCancel ? 1 : 0.65,
-                      }}
-                      title={!canCancel ? "48시간 전부터는 취소할 수 없어요." : "예약 취소"}
-                    >
-                      취소
-                    </button>
-                  ) : (
-                    <span style={{ fontSize: 12, fontWeight: 1100, color: canceled || rejected ? "#999" : "#fff" }}>
-                      —
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       <div style={{ height: 30 }} />
 
       {/* Toast */}
@@ -818,9 +935,6 @@ export default function PracticeStudentPage() {
   );
 }
 
-/* ==========================
-   버튼 프리셋
-========================== */
 function btnGhost(): React.CSSProperties {
   return {
     padding: "8px 10px",

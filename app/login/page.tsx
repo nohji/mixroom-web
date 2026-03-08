@@ -33,20 +33,47 @@ export default function LoginPage() {
 
     try {
       const phoneDigits = normalizePhone(phone);
-      if (!phoneDigits) return setMsg("휴대폰 번호를 입력해줘!");
+      if (!phoneDigits) {
+        setMsg("휴대폰 번호를 입력해줘!");
+        return;
+      }
       if (phoneDigits.length < 10 || phoneDigits.length > 11) {
-        return setMsg("휴대폰 번호 형식이 이상해요. (10~11자리)");
+        setMsg("휴대폰 번호 형식이 이상해요. (10~11자리)");
+        return;
       }
 
       const email = phoneToEmail(phoneDigits);
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error || !data.session) return setMsg(error?.message ?? "로그인 실패");
+      if (error || !data.session || !data.user) {
+        setMsg(error?.message ?? "로그인 실패");
+        return;
+      }
 
-      router.replace("/app"); // ✅ 루비 언니가 확인한 루트
+      // ✅ 로그인 직후 휴면 계정 체크
+      const { data: profile, error: profileErr } = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", data.user.id)
+        .single();
+
+      if (profileErr || !profile) {
+        await supabase.auth.signOut();
+        setMsg("프로필 확인에 실패했습니다. 관리자에게 문의하세요.");
+        return;
+      }
+
+      if (profile.is_active === false) {
+        await supabase.auth.signOut();
+        setMsg("휴면 계정입니다. 관리자에게 문의하세요.");
+        return;
+      }
+
+      router.replace("/app");
       router.refresh();
     } finally {
       setLoading(false);

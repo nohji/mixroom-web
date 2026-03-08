@@ -129,7 +129,7 @@ export default function AdminTeachersPage() {
 
     // role이 대소문자/공백 섞이면 ilike로 바꾸는 게 안전함
     const { data, error } = await supabase
-      .from("profiles_public")
+      .from("profiles")
       .select("id,name")
       .ilike("role", "teacher")
       .order("name", { ascending: true });

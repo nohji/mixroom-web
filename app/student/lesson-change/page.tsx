@@ -47,6 +47,7 @@ type PendingReq = {
   lesson_id: string;
   request_type: RequestType;
   created_at: string;
+  requested_changes: any;
 };
 
 type ChangeQuotaUI = {
@@ -252,7 +253,6 @@ export default function StudentLessonChangePage() {
 
   const [newDate, setNewDate] = useState<string>("");
   const [newTime, setNewTime] = useState<string>("");
-  const [newRoomId, setNewRoomId] = useState<string>("");
   const [reason, setReason] = useState<string>("");
 
   const [acting, setActing] = useState(false);
@@ -569,7 +569,7 @@ export default function StudentLessonChangePage() {
 
     const { data: pend, error: pendErr } = await supabase
       .from("lesson_change_requests")
-      .select("id, lesson_id, request_type, created_at")
+      .select("id, lesson_id, request_type, created_at, requested_changes")
       .eq("student_id", user.id)
       .eq("status", "PENDING")
       .in("lesson_id", lessonIds);
@@ -587,6 +587,7 @@ export default function StudentLessonChangePage() {
         lesson_id: String(p.lesson_id),
         request_type: String(p.request_type) as RequestType,
         created_at: String(p.created_at),
+        requested_changes: p.requested_changes
       });
     });
     setPendingByLesson(map);
@@ -620,7 +621,7 @@ export default function StudentLessonChangePage() {
       setSelected(lesson);
       setNewDate(lesson.lesson_date);
       setNewTime(clampHHMM(lesson.lesson_time));
-      setNewRoomId(lesson.room_id ?? "");
+     // setNewRoomId(lesson.room_id ?? "");
       setReason("");
 
       const baseMonth = startOfMonth(parseLocalDate(lesson.lesson_date));
@@ -648,25 +649,12 @@ export default function StudentLessonChangePage() {
     if (newDate && timeOptions.length > 0) {
       if (newTime && !timeOptions.includes(newTime)) {
         setNewTime("");
-        setNewRoomId("");
       }
     } else {
       setNewTime("");
-      setNewRoomId("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newDate, timeOptions.join("|"), open]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (newDate && newTime) {
-      const ids = roomOptions.map((r) => r.id);
-      if (newRoomId && !ids.includes(newRoomId)) setNewRoomId("");
-    } else {
-      setNewRoomId("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newTime, roomOptions.map((r) => r.id).join("|"), open]);
 
   const submitChangeRequest = async () => {
     if (!selected || !meId) return;
@@ -676,15 +664,20 @@ export default function StudentLessonChangePage() {
       return;
     }
 
-    if (!newDate || !newTime || !newRoomId) {
-      showToast("날짜/시간/홀을 선택해 주세요.", "warn");
+    if (!newDate || !newTime) {
+      showToast("날짜와 시간을 선택해주세요.", "warn");
+      return;
+    }
+    
+    if (!reason.trim()) {
+      showToast("변경 사유를 입력해주세요.", "warn");
       return;
     }
 
     const okSlot =
-      !!optionsByDate[newDate]?.times?.some(
-        (t) => t.time === newTime && (t.rooms ?? []).some((r) => r.id === newRoomId)
-      );
+    !!optionsByDate[newDate]?.times?.some(
+      (t) => t.time === newTime
+    );
 
     if (!okSlot) {
       showToast("선택한 옵션이 현재는 불가능해요. 새로고침 후 다시 선택해 주세요.", "warn");
@@ -702,7 +695,6 @@ export default function StudentLessonChangePage() {
       requested_changes: {
         lesson_date: newDate,
         lesson_time: `${newTime}:00`,
-        room_id: newRoomId,
       },
     });
 
@@ -714,7 +706,7 @@ export default function StudentLessonChangePage() {
       return;
     }
 
-    showToast("변경 요청이 접수되었습니다.", "ok");
+    showToast("변경 요청이 접수되었습니다. 관리자 확인 후 변경 여부가 확정되며 결과를 안내드리겠습니다.","ok");
     setOpen(false);
     setSelected(null);
     setOptionsByDate({});
@@ -1007,8 +999,16 @@ export default function StudentLessonChangePage() {
                         요청 취소
                       </button>
 
-                      <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
-                        * 대기중(PENDING)인 요청만 취소할 수 있어요.
+                      <div style={{ fontSize: 16, color: "#444", fontWeight: 900, lineHeight: "20px" }}>
+                      <b>
+                        (변경요청){" "}
+                        {pending.requested_changes?.lesson_date}{" "}
+                        {pending.requested_changes?.lesson_time?.slice(0,5)} 
+                      </b>
+                      <br />
+                      <span style={{ fontSize: 12, color: "#666" }}>
+                        * 관리자 확인 후 변경 여부가 확정됩니다.
+                      </span>
                       </div>
                     </div>
                   ) : (
@@ -1071,6 +1071,8 @@ export default function StudentLessonChangePage() {
               margin: "0 auto",
               border: "1px solid #d7dbe0",
               boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+              maxHeight: "85vh",   // ✅ 화면 높이 제한
+              overflowY: "auto",   // ✅ 세로 스크롤 생성
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1096,7 +1098,7 @@ export default function StudentLessonChangePage() {
             >
               대상: <b>{selected.lesson_date}</b> {clampHHMM(selected.lesson_time)} · 강사{" "}
               <b>{selected.teacher_name ?? "-"}</b> · 룸 <b>{selected.room_name ?? "-"}</b>
-              <div style={{ marginTop: 6, color: "#666", fontWeight: 900 }}>* 선택 가능한 날짜/시간/홀만 활성화됩니다.</div>
+              <div style={{ marginTop: 6, color: "#666", fontWeight: 900 }}>* 선택 가능한 날짜와 시간만 활성화됩니다.</div>
             </div>
 
             <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -1135,7 +1137,6 @@ export default function StudentLessonChangePage() {
               onSelect={(d) => {
                 setNewDate(d);
                 setNewTime("");
-                setNewRoomId("");
               }}
               minYmd={minSelectableYmd}
               maxYmd={maxSelectableYmd}
@@ -1149,7 +1150,6 @@ export default function StudentLessonChangePage() {
                 value={newTime}
                 onChange={(e) => {
                   setNewTime(e.target.value);
-                  setNewRoomId("");
                 }}
                 disabled={acting || optionsLoading || !newDate}
                 style={selectStyle()}
@@ -1174,31 +1174,7 @@ export default function StudentLessonChangePage() {
             </div>
 
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontWeight: 1100, fontSize: 13, color: "#111" }}>가능 홀 선택</div>
-
-              <select
-                value={newRoomId}
-                onChange={(e) => setNewRoomId(e.target.value)}
-                disabled={acting || optionsLoading || !newDate || !newTime}
-                style={selectStyle()}
-              >
-                <option value="">
-                  {!newTime ? "시간을 먼저 선택" : roomOptions.length === 0 ? "가능한 홀이 없음" : "홀 선택"}
-                </option>
-                {roomOptions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
-
-              <div style={{ marginTop: 6, fontSize: 12, color: "#666", fontWeight: 900 }}>
-                * 선택한 날짜/시간에 비어있는 홀만 표시됩니다.
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontWeight: 1100, fontSize: 13, color: "#111" }}>사유(선택)</div>
+              <div style={{ fontWeight: 1100, fontSize: 13, color: "#111" }}>변경 사유 *</div>
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -1214,13 +1190,13 @@ export default function StudentLessonChangePage() {
                   fontSize: 14,
                   fontWeight: 900,
                   resize: "none",
+                  color: "#111"
                 }}
               />
             </div>
 
             <div style={{ marginTop: 10, fontSize: 12, color: "#111", fontWeight: 1100 }}>
-              선택: <b>{newDate || "(날짜 미선택)"}</b> / <b>{newTime || "(시간 미선택)"}</b> /{" "}
-              <b>{newRoomId ? roomOptions.find((x) => x.id === newRoomId)?.name ?? "(홀)" : "(홀 미선택)"}</b>
+              선택: <b>{newDate || "(날짜 미선택)"}</b> / <b>{newTime || "(시간 미선택)"}</b> 
             </div>
 
             <button
@@ -1324,6 +1300,7 @@ function selectStyle(): React.CSSProperties {
     fontSize: 15,
     fontWeight: 1000,
     background: "#fff",
+    color: "#111"
   };
 }
 

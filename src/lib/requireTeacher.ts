@@ -8,7 +8,7 @@ type TeacherGuardResult =
 export async function requireTeacher(): Promise<TeacherGuardResult> {
   const supabase = await getSupabaseServer();
 
-  // 1️⃣ 로그인 확인 (쿠키 세션 기반)
+  // 1️⃣ 로그인 확인
   const {
     data: { user },
     error: userErr,
@@ -18,15 +18,24 @@ export async function requireTeacher(): Promise<TeacherGuardResult> {
     return { ok: false, status: 401, error: "로그인이 필요합니다." };
   }
 
-  // 2️⃣ role 확인
+  // 2️⃣ role + 활성 상태 확인
   const { data: profile, error: profileErr } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, is_active")
     .eq("id", user.id)
     .single();
 
   if (profileErr || !profile) {
     return { ok: false, status: 403, error: "권한 확인 실패 (profile 없음)" };
+  }
+
+  // 🔴 휴면 계정 차단
+  if (!profile.is_active) {
+    return {
+      ok: false,
+      status: 403,
+      error: "휴면 계정입니다. 관리자에게 문의하세요.",
+    };
   }
 
   const role = String(profile.role ?? "").toUpperCase();
