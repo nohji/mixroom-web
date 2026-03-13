@@ -1179,7 +1179,7 @@ export default function StudentLessonChangePage() {
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 disabled={acting}
-                placeholder="예) 개인 사정으로 변경 요청드립니다."
+                placeholder="예) 변경 사유를 간단히 적어주세요. (예: 출장, 건강 사유 등)"
                 style={{
                   marginTop: 8,
                   width: "100%",

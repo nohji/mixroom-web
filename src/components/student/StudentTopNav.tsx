@@ -7,9 +7,9 @@ export default function StudentTopNav() {
   const pathname = usePathname();
 
   const tabs = [
-    { href: "/student/lesson-change", label: "레슨" }, // ✅ 첫화면
+    { href: "/student/lesson-change", label: "레슨" },
     { href: "/student/practice", label: "연습실" },
-    { href: "/student", label: "메뉴" },
+    { href: "/student/guide", label: "필독사항" },
   ] as const;
 
   return (
@@ -24,7 +24,10 @@ export default function StudentTopNav() {
       }}
     >
       {tabs.map((t) => {
-        const active = pathname === t.href || (t.href !== "/student" && pathname.startsWith(t.href));
+        const active =
+          pathname === t.href ||
+          pathname.startsWith(t.href);
+
         return (
           <Link
             key={t.href}

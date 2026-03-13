@@ -39,13 +39,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const guard = await requireAdmin();
     if (!guard.ok) return json({ error: guard.error }, guard.status);
 
-    // ✅ Next 환경에서 params가 Promise라서 반드시 await
     const { id: lessonId } = await ctx.params;
     if (!lessonId) return json({ error: "missing_lesson_id" }, 400);
 
     const body = (await req.json().catch(() => ({}))) as Body;
 
-    // ✅ status normalize + validation
     const normalizedStatus = body.status !== undefined ? normalizeStatus(body.status) : undefined;
     if (body.status !== undefined && !normalizedStatus) {
       return json(
@@ -133,7 +131,41 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     if (upErr) return json({ error: upErr.message }, 500);
 
-    // 5) audit (있다 했으니 기록)
+    // 4-1) practice_vouchers.valid_until 재계산
+    try {
+      const classId = after?.class_id ?? before?.class_id ?? null;
+
+      if (classId) {
+        const { data: lessonAgg, error: aggErr } = await supabaseServer
+          .from("lessons")
+          .select("lesson_date")
+          .eq("class_id", classId)
+          .neq("status", "canceled")
+          .order("lesson_date", { ascending: false })
+          .limit(1);
+
+        if (aggErr) {
+          console.warn("[practice_vouchers] max lesson_date load failed:", aggErr);
+        } else {
+          const lastLessonDate = lessonAgg?.[0]?.lesson_date ?? null;
+
+          if (lastLessonDate) {
+            const { error: pvErr } = await supabaseServer
+              .from("practice_vouchers")
+              .update({ valid_until: lastLessonDate })
+              .eq("class_id", classId);
+
+            if (pvErr) {
+              console.warn("[practice_vouchers] valid_until update failed:", pvErr);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[practice_vouchers] recalc failed:", e);
+    }
+
+    // 5) audit
     const adminId =
       // @ts-ignore
       guard.user?.id ?? guard.admin_id ?? null;

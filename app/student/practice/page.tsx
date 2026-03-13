@@ -66,6 +66,12 @@ function mapPracticeError(code: string) {
   if (code.includes("CANCEL_DEADLINE_PASSED")) {
     return "취소 가능 기간이 지나 취소할 수 없습니다.";
   }
+  if (code.includes("TOO_SOON")) {
+    return "연습실 예약은 최소 2일 전부터 가능합니다.";
+  }
+  if (code.includes("TOO_FAR")) {
+    return "연습실 예약은 최대 30일 뒤까지만 가능합니다.";
+  }
 
   return "예약 처리 중 오류가 발생했습니다.";
 }
@@ -130,9 +136,38 @@ function inRangeDate(d: string, from?: string | null, to?: string | null) {
   return true;
 }
 
+function todayStartLocal() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDaysLocal(base: Date, days: number) {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function getPracticeReservePolicyRange() {
+  const today = todayStartLocal();
+  const minDate = addDaysLocal(today, 2); // 오늘+2일
+  const maxDate = addDaysLocal(today, 30); // 오늘+30일
+  return {
+    minYmd: ymd(minDate),
+    maxYmd: ymd(maxDate),
+  };
+}
+
+function isPracticeReservableDate(dateStr: string) {
+  const { minYmd, maxYmd } = getPracticeReservePolicyRange();
+  return dateStr >= minYmd && dateStr <= maxYmd;
+}
+
 export default function PracticeStudentPage() {
+  const initialPolicyRange = getPracticeReservePolicyRange();
+
   const [weekStart, setWeekStart] = useState(() => ymd(startOfWeek(new Date())));
-  const [selectedDate, setSelectedDate] = useState(() => ymd(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => initialPolicyRange.minYmd);
   const [selectedRoom, setSelectedRoom] = useState<(typeof ROOMS)[number]>("A");
 
   const [rooms, setRooms] = useState<any[]>([]);
@@ -171,6 +206,11 @@ export default function PracticeStudentPage() {
   const voucherFrom = useMemo(() => voucherSummary?.usable_from ?? null, [voucherSummary]);
   const voucherTo = useMemo(() => voucherSummary?.usable_until ?? null, [voucherSummary]);
 
+  // 날짜 바뀌어도 렌더 시 자동 반영
+  const practicePolicyRange = getPracticeReservePolicyRange();
+  const reserveMinYmd = practicePolicyRange.minYmd;
+  const reserveMaxYmd = practicePolicyRange.maxYmd;
+
   const isUpcomingVoucher = useMemo(() => {
     const t = voucherSummary?.today;
     const vf = voucherSummary?.usable_from ?? null;
@@ -184,24 +224,33 @@ export default function PracticeStudentPage() {
     }
     return !!(voucherSummary?.usable_from || voucherSummary?.usable_until);
   }, [voucherSummary]);
-  
+
   const isVoucherEmpty = useMemo(() => {
     return hasVoucher && (voucherSummary?.remaining_hours ?? 0) <= 0;
   }, [hasVoucher, voucherSummary]);
-  
-  const canReserveByVoucher = useMemo(() => {
-    return !isVoucherEmpty;
-  }, [isVoucherEmpty]);
 
   useEffect(() => {
     const sd = parseYmd(selectedDate);
     const ws = parseYmd(weekFrom);
     const we = parseYmd(weekTo);
+
+    let next = selectedDate;
+
     if (sd < ws || sd > we) {
-      setSelectedDate(weekFrom);
+      next = weekFrom;
+    }
+
+    if (!isPracticeReservableDate(next)) {
+      if (weekFrom <= reserveMaxYmd && weekTo >= reserveMinYmd) {
+        next = weekFrom < reserveMinYmd ? reserveMinYmd : weekFrom;
+      }
+    }
+
+    if (next !== selectedDate) {
+      setSelectedDate(next);
       setPickedTimes([]);
     }
-  }, [selectedDate, weekFrom, weekTo]);
+  }, [selectedDate, weekFrom, weekTo, reserveMinYmd, reserveMaxYmd]);
 
   function getSlots(date: Date) {
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
@@ -235,9 +284,6 @@ export default function PracticeStudentPage() {
     setVoucherSummary((json.voucher_summary ?? null) as VoucherSummary | null);
     setPolicy(json.policy ?? null);
     setListVisibleCount(10);
-
-    console.log("json.my_reservations_in_voucher", json.my_reservations_in_voucher);
-console.log("json.voucher_summary", json.voucher_summary);
 
     return { ok: true as const };
   }, [weekFrom, weekTo, showToast]);
@@ -276,6 +322,28 @@ console.log("json.voucher_summary", json.voucher_summary);
     ).length;
   }, [reservations, me, selectedDate]);
 
+  const prevWeekStart = useMemo(() => {
+    const d = parseYmd(weekStart);
+    d.setDate(d.getDate() - 7);
+    return ymd(startOfWeek(d));
+  }, [weekStart]);
+
+  const nextWeekStart = useMemo(() => {
+    const d = parseYmd(weekStart);
+    d.setDate(d.getDate() + 7);
+    return ymd(startOfWeek(d));
+  }, [weekStart]);
+
+  const canGoPrevWeek = useMemo(() => {
+    const prevStart = prevWeekStart;
+    const prevEnd = ymd(addDays(parseYmd(prevStart), 6));
+    return prevStart <= reserveMaxYmd && prevEnd >= reserveMinYmd;
+  }, [prevWeekStart, reserveMinYmd, reserveMaxYmd]);
+
+  const canGoNextWeek = useMemo(() => {
+    return nextWeekStart <= reserveMaxYmd;
+  }, [nextWeekStart, reserveMaxYmd]);
+
   function slotStatus(dateStr: string, time: string, room: string) {
     const lessonBlock = lessons.some(
       (l) =>
@@ -306,13 +374,21 @@ console.log("json.voucher_summary", json.voucher_summary);
     const st = slotStatus(selectedDate, t, selectedRoom);
     if (st.kind !== "free") return;
 
+    if (!isPracticeReservableDate(selectedDate)) {
+      showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
+      return;
+    }
+
     if (!inRangeDate(selectedDate, voucherFrom, voucherTo)) {
       showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
       return;
     }
 
     if (isVoucherEmpty) {
-      showToast("무료 제공된 연습실 이용 시간이 모두 사용되었습니다. 추가 이용권은 카카오톡 채널로 문의해 주세요.", "warn");
+      showToast(
+        "무료 제공된 연습실 이용 시간이 모두 사용되었습니다. 추가 이용권은 카카오톡 채널로 문의해 주세요.",
+        "warn"
+      );
       return;
     }
 
@@ -331,13 +407,21 @@ console.log("json.voucher_summary", json.voucher_summary);
   async function reserve() {
     if (pickedTimes.length === 0) return;
 
+    if (!isPracticeReservableDate(selectedDate)) {
+      showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
+      return;
+    }
+
     if (!inRangeDate(selectedDate, voucherFrom, voucherTo)) {
       showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
       return;
     }
 
     if (isVoucherEmpty) {
-      showToast("무료 제공된 연습실 이용 시간이 모두 사용되었습니다. 추가 이용권은 카카오톡 채널로 문의해 주세요.", "warn");
+      showToast(
+        "무료 제공된 연습실 이용 시간이 모두 사용되었습니다. 추가 이용권은 카카오톡 채널로 문의해 주세요.",
+        "warn"
+      );
       return;
     }
 
@@ -397,6 +481,7 @@ console.log("json.voucher_summary", json.voucher_summary);
   }
 
   const goPrevWeek = () => {
+    if (!canGoPrevWeek) return;
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() - 7);
     setWeekStart(ymd(startOfWeek(d)));
@@ -404,6 +489,7 @@ console.log("json.voucher_summary", json.voucher_summary);
   };
 
   const goNextWeek = () => {
+    if (!canGoNextWeek) return;
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setWeekStart(ymd(startOfWeek(d)));
@@ -412,7 +498,7 @@ console.log("json.voucher_summary", json.voucher_summary);
 
   const goThisWeek = () => {
     setWeekStart(ymd(startOfWeek(new Date())));
-    setSelectedDate(ymd(new Date()));
+    setSelectedDate(reserveMinYmd);
     setPickedTimes([]);
   };
 
@@ -448,9 +534,7 @@ console.log("json.voucher_summary", json.voucher_summary);
 
       {/* 예약 내역 상단 */}
       <div ref={reservationListRef} style={{ marginTop: 12 }}>
-        <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 10 }}>
-          📌 현재 수강권 예약 내역 {voucherTo ? "" : ""}
-        </div>
+        <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 10 }}>📌 현재 수강권 예약 내역</div>
 
         <div
           style={{
@@ -660,6 +744,25 @@ console.log("json.voucher_summary", json.voucher_summary);
         </div>
       </div>
 
+      {/* 예약 정책 안내 */}
+      <div
+        style={{
+          marginTop: 12,
+          padding: "10px 12px",
+          borderRadius: 12,
+          background: "#f3f4f6",
+          border: "1px solid #d7dbe0",
+          color: "#111",
+          fontWeight: 1000,
+          fontSize: 12,
+          lineHeight: "18px",
+        }}
+      >
+        연습실 예약 가능 기간: <b>{reserveMinYmd}</b> ~ <b>{reserveMaxYmd}</b>
+        <br />
+        * 당일 및 다음날 예약은 불가하며, 최대 30일 뒤까지만 신청할 수 있어요.
+      </div>
+
       {/* Week controls */}
       <div
         style={{
@@ -673,21 +776,21 @@ console.log("json.voucher_summary", json.voucher_summary);
           gap: 10,
         }}
       >
-        <button onClick={goPrevWeek} style={btnGhost()}>
+        <button onClick={goPrevWeek} style={btnGhost(!canGoPrevWeek)} disabled={!canGoPrevWeek}>
           ◀
         </button>
         <div style={{ fontWeight: 1000, fontSize: 13, color: "#111" }}>
           {weekFrom} ~ {weekTo}
         </div>
-        <button onClick={goNextWeek} style={btnGhost()}>
+        <button onClick={goNextWeek} style={btnGhost(!canGoNextWeek)} disabled={!canGoNextWeek}>
           ▶
         </button>
 
-        <button onClick={goThisWeek} style={{ ...btnGhost(), marginLeft: "auto" }}>
+        <button onClick={goThisWeek} style={{ ...btnGhost(false), marginLeft: "auto" }}>
           이번주
         </button>
 
-        <button onClick={load} style={btnPrimary()}>
+        <button onClick={load} style={btnPrimary()} disabled={loading}>
           새로고침
         </button>
       </div>
@@ -703,16 +806,23 @@ console.log("json.voucher_summary", json.voucher_summary);
             const isToday = dateStr === ymd(new Date());
 
             const outOfVoucher = !inRangeDate(dateStr, voucherFrom, voucherTo);
-            const opacity = outOfVoucher ? 0.55 : 1;
+            const outOfPolicy = !isPracticeReservableDate(dateStr);
+            const blocked = outOfVoucher || outOfPolicy;
+            const opacity = blocked ? 0.55 : 1;
 
             return (
               <button
                 key={dateStr}
                 onClick={() => {
+                  if (outOfPolicy) {
+                    showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
+                    return;
+                  }
                   if (outOfVoucher) {
                     showToast("수강권 기간 밖의 날짜입니다.", "warn");
                     return;
                   }
+
                   setSelectedDate(dateStr);
                   setPickedTimes([]);
                 }}
@@ -724,11 +834,17 @@ console.log("json.voucher_summary", json.voucher_summary);
                   background: isSel ? "#111" : "#fff",
                   color: isSel ? "#fff" : "#111",
                   fontWeight: 1000,
-                  cursor: outOfVoucher ? "not-allowed" : "pointer",
+                  cursor: blocked ? "not-allowed" : "pointer",
                   textAlign: "left",
                   opacity,
                 }}
-                title={outOfVoucher ? "수강권(무료 제공 기간) 밖의 날짜입니다." : dateStr}
+                title={
+                  outOfPolicy
+                    ? `연습실 예약 가능 기간은 ${reserveMinYmd} ~ ${reserveMaxYmd} 입니다.`
+                    : outOfVoucher
+                    ? "수강권(무료 제공 기간) 밖의 날짜입니다."
+                    : dateStr
+                }
               >
                 <div style={{ fontSize: 12, fontWeight: 1000, color: isSel ? "#fff" : "#111", opacity: isSel ? 1 : 0.85 }}>
                   {DOW[d.getDay()]} {isToday ? "· 오늘" : ""}
@@ -935,7 +1051,7 @@ console.log("json.voucher_summary", json.voucher_summary);
   );
 }
 
-function btnGhost(): React.CSSProperties {
+function btnGhost(disabled = false): React.CSSProperties {
   return {
     padding: "8px 10px",
     borderRadius: 10,
@@ -943,7 +1059,8 @@ function btnGhost(): React.CSSProperties {
     background: "#fff",
     color: "#111",
     fontWeight: 1000,
-    cursor: "pointer",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.45 : 1,
   };
 }
 

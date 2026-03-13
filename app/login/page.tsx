@@ -15,8 +15,27 @@ import {
 function normalizePhone(input: string) {
   return input.replace(/\D/g, "");
 }
+
 function phoneToEmail(phoneDigits: string) {
   return `${phoneDigits}@mixroom.local`;
+}
+
+function getLoginErrorMessage(message?: string) {
+  const msg = (message ?? "").toLowerCase();
+
+  if (msg.includes("invalid login credentials")) {
+    return "로그인 정보가 올바르지 않습니다.";
+  }
+
+  if (msg.includes("email not confirmed")) {
+    return "계정 인증이 완료되지 않았습니다. 관리자에게 문의하세요.";
+  }
+
+  if (msg.includes("too many requests")) {
+    return "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+  }
+
+  return "로그인에 실패했습니다. 다시 시도해 주세요.";
 }
 
 export default function LoginPage() {
@@ -33,10 +52,12 @@ export default function LoginPage() {
 
     try {
       const phoneDigits = normalizePhone(phone);
+
       if (!phoneDigits) {
         setMsg("휴대폰 번호를 입력해줘!");
         return;
       }
+
       if (phoneDigits.length < 10 || phoneDigits.length > 11) {
         setMsg("휴대폰 번호 형식이 이상해요. (10~11자리)");
         return;
@@ -50,11 +71,11 @@ export default function LoginPage() {
       });
 
       if (error || !data.session || !data.user) {
-        setMsg(error?.message ?? "로그인 실패");
+        setMsg(getLoginErrorMessage(error?.message));
         return;
       }
 
-      // ✅ 로그인 직후 휴면 계정 체크
+      // 로그인 직후 휴면 계정 체크
       const { data: profile, error: profileErr } = await supabase
         .from("profiles")
         .select("role, is_active")
@@ -97,6 +118,9 @@ export default function LoginPage() {
               onChange={(e) => setPhone(e.target.value)}
               placeholder="01012345678"
               inputMode="numeric"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !loading) onLogin();
+              }}
             />
           </label>
 
@@ -108,6 +132,9 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="0000"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !loading) onLogin();
+              }}
             />
             <span style={{ color: colors.textMuted, fontSize: 12 }}>
               초기 비밀번호는 0000 (로그인 후 변경 권장)
@@ -125,7 +152,7 @@ export default function LoginPage() {
           {msg && (
             <div
               style={{
-                border: `1px solid #f1c1c1`,
+                border: "1px solid #f1c1c1",
                 background: "#fff5f5",
                 color: colors.danger,
                 borderRadius: 10,

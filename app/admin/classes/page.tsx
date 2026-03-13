@@ -1,4 +1,3 @@
-// app/admin/classes/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -15,11 +14,11 @@ type RoomOption = { id: string; name: string };
 
 type LessonDraft = {
   idx: number;
-  lesson_date: string; // YYYY-MM-DD (회차별 수정 가능)
+  lesson_date: string;
   teacher_id: string;
-  lesson_time: string; // HH:mm (✅ 1시간 단위)
+  lesson_time: string;
   room_id: string;
-  selected: boolean; // ✅ 체크박스(선택회차 일괄 적용)
+  selected: boolean;
 };
 
 type ConflictDetail = {
@@ -64,19 +63,15 @@ function correctedFirstDate(startDate: string, weekday: number) {
 function lessonCountByType(type: ClassType) {
   return type === "1month" ? 4 : 12;
 }
-
-// ✅ 시간 옵션: 1시간 단위(정각)
 function buildTimeOptions(startHour = 9, endHour = 23) {
   const out: string[] = [];
   for (let h = startHour; h <= endHour; h++) out.push(`${pad2(h)}:00`);
   return out;
 }
-
-// ✅ 선택회차 “요일 적용”용: 같은 주 안에서 target 요일로 이동
 function shiftDateToWeekday(ymd: string, targetW: number) {
   const d = new Date(`${ymd}T00:00:00`);
   const cur = d.getDay();
-  const delta = targetW - cur; // 같은 주 안에서 이동
+  const delta = targetW - cur;
   d.setDate(d.getDate() + delta);
   return toYMD(d);
 }
@@ -85,6 +80,7 @@ function shiftDateToWeekday(ymd: string, targetW: number) {
 export default function AdminClassesPage() {
   const weekdayLabel = useMemo(() => ["일", "월", "화", "수", "목", "금", "토"], []);
   const timeOptions = useMemo(() => buildTimeOptions(9, 23), []);
+  const [isMobile, setIsMobile] = useState(false);
 
   // users
   const [students, setStudents] = useState<StudentOption[]>([]);
@@ -106,7 +102,7 @@ export default function AdminClassesPage() {
   const [defaultTeacherId, setDefaultTeacherId] = useState("");
   const [defaultTime, setDefaultTime] = useState("19:00");
   const [defaultRoomId, setDefaultRoomId] = useState("");
-  const [defaultWeekday, setDefaultWeekday] = useState(3); // ✅ 선택회차 요일 적용용
+  const [defaultWeekday, setDefaultWeekday] = useState(3);
 
   // lessons
   const [lessons, setLessons] = useState<LessonDraft[]>([]);
@@ -116,6 +112,13 @@ export default function AdminClassesPage() {
 
   const [msg, setMsg] = useState("");
   const [createMsg, setCreateMsg] = useState("");
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= 900);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   const studentLabel = (s: StudentOption) => {
     const nm = s.name?.trim() ? s.name : "이름없음";
@@ -131,7 +134,6 @@ export default function AdminClassesPage() {
   const loadUsers = async () => {
     setLoadingUsers(true);
     try {
-      // students
       const qsS = new URLSearchParams();
       qsS.set("role", "student");
       const resS = await authFetch(`/api/admin/list-users?${qsS.toString()}`);
@@ -147,7 +149,6 @@ export default function AdminClassesPage() {
         setStudents([]);
       }
 
-      // teachers
       const qsT = new URLSearchParams();
       qsT.set("role", "teacher");
       const resT = await authFetch(`/api/admin/list-users?${qsT.toString()}`);
@@ -180,8 +181,6 @@ export default function AdminClassesPage() {
       }
       const rows = (data.rows ?? []) as RoomOption[];
       setRooms(rows);
-
-      // 기본 룸이 비어있으면 첫 룸을 기본값으로
       if (!defaultRoomId && rows.length > 0) setDefaultRoomId(rows[0].id);
     } finally {
       setLoadingRooms(false);
@@ -198,12 +197,10 @@ export default function AdminClassesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceType]);
 
-  // weekday 변경 시, 선택회차 요일 기본값도 같이 맞춰줌(편의)
   useEffect(() => {
     setDefaultWeekday(weekday);
   }, [weekday]);
 
-  // 회차 자동 생성/갱신 (기본값으로 초기 채움)
   useEffect(() => {
     setMsg("");
     setCreateMsg("");
@@ -222,7 +219,7 @@ export default function AdminClassesPage() {
 
         next.push({
           idx: i + 1,
-          lesson_date: date, 
+          lesson_date: date,
           teacher_id: old?.teacher_id || defaultTeacherId || "",
           lesson_time: old?.lesson_time || defaultTime,
           room_id: old?.room_id || defaultRoomId || "",
@@ -233,7 +230,6 @@ export default function AdminClassesPage() {
     });
   }, [classType, startDate, weekday, defaultTeacherId, defaultTime, defaultRoomId]);
 
-  // 충돌 맵
   const conflictMap = useMemo(() => {
     const m = new Map<number, ConflictDetail>();
     conflicts.forEach((c) => m.set(c.idx, c));
@@ -247,13 +243,11 @@ export default function AdminClassesPage() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
-  // ✅ 수정하면 충돌 상태 자동 해제
   const updateLesson = (idx: number, patch: Partial<LessonDraft>) => {
     setLessons((prev) => prev.map((l) => (l.idx === idx ? { ...l, ...patch } : l)));
     if (conflicts.length) setConflicts([]);
   };
 
-  // 체크/전체적용
   const selectedCount = lessons.filter((l) => l.selected).length;
   const allSelected = lessons.length > 0 && selectedCount === lessons.length;
 
@@ -287,7 +281,6 @@ export default function AdminClassesPage() {
     if (conflicts.length) setConflicts([]);
   };
 
-  // 저장
   const createManualClass = async () => {
     setCreateMsg("");
     setMsg("");
@@ -326,7 +319,6 @@ export default function AdminClassesPage() {
 
     const data = await res.json().catch(() => ({}));
 
-    // ✅ 저장 실패 시 자동으로 문제 회차로 이동 + 사유 표시
     if (!res.ok && Array.isArray(data.details)) {
       setConflicts(data.details as ConflictDetail[]);
       const firstIdx = (data.details as ConflictDetail[])[0]?.idx;
@@ -345,18 +337,24 @@ export default function AdminClassesPage() {
 
   return (
     <AdminLayoutShell title="수강권 생성 (수동 배정)">
-      <div style={{ maxWidth: 980 }}>
+      <div style={{ width: "100%", maxWidth: 1100, minWidth: 0 }}>
         {/* 1) 기본 정보 */}
-        <section style={boxStyle}>
+        <section style={{ ...boxStyle, padding: isMobile ? 14 : undefined }}>
           <div style={sectionTitle}>1) 기본 정보</div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              수강생 선택
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))",
+              gap: 10,
+              marginTop: 12,
+            }}
+          >
+            <Field label="수강생 선택">
               <select
                 value={studentId}
                 onChange={(e) => setStudentId(e.target.value)}
-                style={{ ...inputStyle, minWidth: 280 }}
+                style={{ ...inputStyle, width: "100%", minWidth: 0 }}
                 disabled={loadingUsers || students.length === 0}
               >
                 {loadingUsers ? (
@@ -371,42 +369,55 @@ export default function AdminClassesPage() {
                   ))
                 )}
               </select>
-            </label>
+            </Field>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              수강권 타입
-              <select value={classType} onChange={(e) => setClassType(e.target.value as ClassType)} style={inputStyle}>
+            <Field label="수강권 타입">
+              <select
+                value={classType}
+                onChange={(e) => setClassType(e.target.value as ClassType)}
+                style={{ ...inputStyle, width: "100%" }}
+              >
                 <option value="1month">1개월 (4회)</option>
                 <option value="3month">3개월 (12회)</option>
               </select>
-            </label>
+            </Field>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              기기
-              <select value={deviceType} onChange={(e) => setDeviceType(e.target.value as DeviceType)} style={inputStyle}>
+            <Field label="기기">
+              <select
+                value={deviceType}
+                onChange={(e) => setDeviceType(e.target.value as DeviceType)}
+                style={{ ...inputStyle, width: "100%" }}
+              >
                 <option value="controller">컨트롤러</option>
                 <option value="turntable">턴테이블</option>
               </select>
-            </label>
+            </Field>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              시작일(startDate)
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputStyle} />
-            </label>
+            <Field label="시작일(startDate)">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                style={{ ...inputStyle, width: "100%" }}
+              />
+            </Field>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              기본 요일(초기 회차 생성용)
-              <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} style={inputStyle}>
+            <Field label="기본 요일(초기 회차 생성용)">
+              <select
+                value={weekday}
+                onChange={(e) => setWeekday(Number(e.target.value))}
+                style={{ ...inputStyle, width: "100%" }}
+              >
                 {weekdayLabel.map((d, idx) => (
                   <option key={idx} value={idx}>
                     {d}요일
                   </option>
                 ))}
               </select>
-            </label>
+            </Field>
           </div>
 
-          <div style={{ marginTop: 10, color: colors.textSub, fontSize: 12, lineHeight: 1.5 }}>
+          <div style={{ marginTop: 10, color: colors.textSub, fontSize: 12, lineHeight: 1.6 }}>
             • 회차별로 <b>날짜(요일)/강사/시간/룸</b>을 직접 선택합니다.<br />
             • 시간 선택은 <b>1시간 단위(정각)</b>입니다.
           </div>
@@ -428,90 +439,144 @@ export default function AdminClassesPage() {
         </section>
 
         {/* 2) 회차별 배정 */}
-        <section style={{ ...boxStyle, marginTop: 14 }}>
+        <section style={{ ...boxStyle, marginTop: 14, padding: isMobile ? 14 : undefined }}>
           <div style={sectionTitle}>2) 회차별 배정</div>
 
-          {/* 액션바 */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
-            <div style={{ color: colors.textSub, fontSize: 12 }}>
+          <div
+            style={{
+              marginTop: 10,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                background: "#fafafa",
+                border: `1px solid ${colors.border}`,
+                color: colors.text,
+                fontSize: 14,
+                fontWeight: 700,
+              }}
+            >
               선택된 회차: <b>{selectedCount}</b> / {lessons.length}
             </div>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              기본 강사
-              <select
-                value={defaultTeacherId}
-                onChange={(e) => setDefaultTeacherId(e.target.value)}
-                style={{ ...inputStyle, minWidth: 220 }}
-                disabled={loadingUsers || teachers.length === 0}
-              >
-                {teachers.length === 0 ? (
-                  <option value="">강사 없음</option>
-                ) : (
-                  teachers.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {teacherLabel(t)}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile ? "1fr" : "repeat(4, minmax(0, 1fr))",
+                gap: 10,
+                alignItems: "end",
+              }}
+            >
+              <Field label="기본 강사">
+                <select
+                  value={defaultTeacherId}
+                  onChange={(e) => setDefaultTeacherId(e.target.value)}
+                  style={{ ...inputStyle, width: "100%", minWidth: 0 }}
+                  disabled={loadingUsers || teachers.length === 0}
+                >
+                  {teachers.length === 0 ? (
+                    <option value="">강사 없음</option>
+                  ) : (
+                    teachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {teacherLabel(t)}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </Field>
+
+              <Field label="기본 시간">
+                <select
+                  value={defaultTime}
+                  onChange={(e) => setDefaultTime(e.target.value)}
+                  style={{ ...inputStyle, width: "100%" }}
+                >
+                  {timeOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
                     </option>
-                  ))
-                )}
-              </select>
-            </label>
+                  ))}
+                </select>
+              </Field>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              기본 시간
-              <select value={defaultTime} onChange={(e) => setDefaultTime(e.target.value)} style={inputStyle}>
-                {timeOptions.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <Field label="기본 룸">
+                <select
+                  value={defaultRoomId}
+                  onChange={(e) => setDefaultRoomId(e.target.value)}
+                  style={{ ...inputStyle, width: "100%", minWidth: 0 }}
+                  disabled={loadingRooms || rooms.length === 0}
+                >
+                  {loadingRooms ? (
+                    <option value="">불러오는 중...</option>
+                  ) : rooms.length === 0 ? (
+                    <option value="">룸 없음</option>
+                  ) : (
+                    rooms.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </Field>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              기본 룸
-              <select
-                value={defaultRoomId}
-                onChange={(e) => setDefaultRoomId(e.target.value)}
-                style={{ ...inputStyle, minWidth: 160 }}
-                disabled={loadingRooms || rooms.length === 0}
-              >
-                {loadingRooms ? (
-                  <option value="">불러오는 중...</option>
-                ) : rooms.length === 0 ? (
-                  <option value="">룸 없음</option>
-                ) : (
-                  rooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
+              <Field label="선택회차 요일">
+                <select
+                  value={defaultWeekday}
+                  onChange={(e) => setDefaultWeekday(Number(e.target.value))}
+                  style={{ ...inputStyle, width: "100%" }}
+                >
+                  {weekdayLabel.map((d, idx) => (
+                    <option key={idx} value={idx}>
+                      {d}요일
                     </option>
-                  ))
-                )}
-              </select>
-            </label>
+                  ))}
+                </select>
+              </Field>
+            </div>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
-              선택회차 요일
-              <select value={defaultWeekday} onChange={(e) => setDefaultWeekday(Number(e.target.value))} style={inputStyle}>
-                {weekdayLabel.map((d, idx) => (
-                  <option key={idx} value={idx}>
-                    {d}요일
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-              <button style={secondaryButton} onClick={applyTeacherToSelected} disabled={selectedCount === 0 || !defaultTeacherId}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(5, max-content)",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              <button style={{ ...secondaryButton, width: "100%" }} onClick={() => setAllSelected(!allSelected)}>
+                {allSelected ? "전체 해제" : "전체 선택"}
+              </button>
+              <button
+                style={{ ...secondaryButton, width: "100%" }}
+                onClick={applyTeacherToSelected}
+                disabled={selectedCount === 0 || !defaultTeacherId}
+              >
                 선택회차 강사 적용
               </button>
-              <button style={secondaryButton} onClick={applyTimeToSelected} disabled={selectedCount === 0 || !defaultTime}>
+              <button
+                style={{ ...secondaryButton, width: "100%" }}
+                onClick={applyTimeToSelected}
+                disabled={selectedCount === 0 || !defaultTime}
+              >
                 선택회차 시간 적용
               </button>
-              <button style={secondaryButton} onClick={applyRoomToSelected} disabled={selectedCount === 0 || !defaultRoomId}>
+              <button
+                style={{ ...secondaryButton, width: "100%" }}
+                onClick={applyRoomToSelected}
+                disabled={selectedCount === 0 || !defaultRoomId}
+              >
                 선택회차 룸 적용
               </button>
-              <button style={secondaryButton} onClick={applyWeekdayToSelected} disabled={selectedCount === 0}>
+              <button
+                style={{ ...secondaryButton, width: "100%" }}
+                onClick={applyWeekdayToSelected}
+                disabled={selectedCount === 0}
+              >
                 선택회차 요일 적용
               </button>
             </div>
@@ -520,114 +585,76 @@ export default function AdminClassesPage() {
           {lessons.length === 0 ? (
             <p style={{ marginTop: 10, color: colors.text }}>회차가 없습니다.</p>
           ) : (
-            <div style={{ marginTop: 10, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th
+            <div style={{ marginTop: 12 }}>
+              {isMobile ? (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {lessons.map((l) => (
+                    <div
+                      key={l.idx}
+                      id={`lesson-row-${l.idx}`}
                       style={{
-                        textAlign: "left",
-                        padding: 10,
-                        borderBottom: `1px solid ${colors.border}`,
-                        color: colors.text,
+                        border: hasConflict(l.idx) ? "1px solid #f5c2c2" : `1px solid ${colors.border}`,
+                        background: hasConflict(l.idx) ? "#fff5f5" : "#fff",
+                        borderRadius: 14,
+                        padding: 12,
+                        display: "grid",
+                        gap: 10,
                       }}
                     >
-                      <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <input
-                          type="checkbox"
-                          checked={allSelected}
-                          onChange={(e) => setAllSelected(e.target.checked)}
-                        />
-                        선택
-                      </label>
-                    </th>
-                    {["회차", "날짜(수정 가능)", "강사", "시간(정각)", "룸"].map((h) => (
-                      <th
-                        key={h}
+                      <div
                         style={{
-                          textAlign: "left",
-                          padding: 10,
-                          borderBottom: `1px solid ${colors.border}`,
-                          color: colors.text,
-                          whiteSpace: "nowrap",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          alignItems: "center",
+                          flexWrap: "wrap",
                         }}
                       >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {lessons.map((l) => (
-                    <>
-                      <tr
-                        key={l.idx}
-                        id={`lesson-row-${l.idx}`}
-                        style={{
-                          background: hasConflict(l.idx) ? "#fff5f5" : undefined,
-                        }}
-                      >
-                        <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800 }}>
                           <input
                             type="checkbox"
                             checked={l.selected}
                             onChange={() => updateLesson(l.idx, { selected: !l.selected })}
                           />
-                        </td>
-
-                        <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: colors.text }}>
                           {hasConflict(l.idx) ? "❗ " : ""}
                           {l.idx}회차
-                        </td>
+                        </label>
 
-                        <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: colors.text }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <div>
-                              <b>{l.lesson_date}</b>{" "}
-                              <span style={{ color: colors.textMuted }}>
-                                ({weekdayLabel[weekdayOf(l.lesson_date)]})
-                              </span>
-                            </div>
+                        <span style={{ fontSize: 12, color: colors.textSub }}>
+                          {l.lesson_date} ({weekdayLabel[weekdayOf(l.lesson_date)]})
+                        </span>
+                      </div>
 
-                            <select
-                              value={weekdayOf(l.lesson_date)}
-                              onChange={(e) =>
-                                updateLesson(l.idx, {
-                                  lesson_date: shiftDateToWeekday(l.lesson_date, Number(e.target.value)),
-                                })
-                              }
-                              style={{ ...inputStyle, width: 120 }}
-                            >
-                              {weekdayLabel.map((d, idx) => (
-                                <option key={idx} value={idx}>
-                                  {d}요일
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </td>
-
-                        <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                          gap: 10,
+                        }}
+                      >
+                        <Field label="요일 변경">
                           <select
-                            value={l.teacher_id}
-                            onChange={(e) => updateLesson(l.idx, { teacher_id: e.target.value })}
-                            style={{ ...inputStyle, minWidth: 220 }}
+                            value={weekdayOf(l.lesson_date)}
+                            onChange={(e) =>
+                              updateLesson(l.idx, {
+                                lesson_date: shiftDateToWeekday(l.lesson_date, Number(e.target.value)),
+                              })
+                            }
+                            style={{ ...inputStyle, width: "100%" }}
                           >
-                            <option value="">선택</option>
-                            {teachers.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {teacherLabel(t)}
+                            {weekdayLabel.map((d, idx) => (
+                              <option key={idx} value={idx}>
+                                {d}요일
                               </option>
                             ))}
                           </select>
-                        </td>
+                        </Field>
 
-                        <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                        <Field label="시간">
                           <select
                             value={l.lesson_time}
                             onChange={(e) => updateLesson(l.idx, { lesson_time: e.target.value })}
-                            style={{ ...inputStyle, width: 120 }}
+                            style={{ ...inputStyle, width: "100%" }}
                           >
                             {timeOptions.map((t) => (
                               <option key={t} value={t}>
@@ -635,59 +662,232 @@ export default function AdminClassesPage() {
                               </option>
                             ))}
                           </select>
-                        </td>
+                        </Field>
+                      </div>
 
-                        <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                          <select
-                            value={l.room_id}
-                            onChange={(e) => updateLesson(l.idx, { room_id: e.target.value })}
-                            style={{ ...inputStyle, minWidth: 160 }}
-                            disabled={loadingRooms || rooms.length === 0}
-                          >
-                            <option value="">룸 선택</option>
-                            {rooms.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
+                      <Field label="강사">
+                        <select
+                          value={l.teacher_id}
+                          onChange={(e) => updateLesson(l.idx, { teacher_id: e.target.value })}
+                          style={{ ...inputStyle, width: "100%" }}
+                        >
+                          <option value="">선택</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {teacherLabel(t)}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
 
-                      {/* ✅ 에러 이유를 회차 바로 아래에서 확인 */}
+                      <Field label="룸">
+                        <select
+                          value={l.room_id}
+                          onChange={(e) => updateLesson(l.idx, { room_id: e.target.value })}
+                          style={{ ...inputStyle, width: "100%" }}
+                          disabled={loadingRooms || rooms.length === 0}
+                        >
+                          <option value="">룸 선택</option>
+                          {rooms.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+
                       {hasConflict(l.idx) && (
-                        <tr>
-                          <td colSpan={6} style={{ padding: 10 }}>
-                            <div
-                              style={{
-                                border: "1px solid #f5c2c2",
-                                background: "#fff0f0",
-                                borderRadius: 8,
-                                padding: 10,
-                                color: "#b42318",
-                                fontSize: 13,
-                              }}
-                            >
-                              <b>❗ {l.idx}회차 문제</b>
-                              <ul style={{ marginTop: 6, paddingLeft: 18 }}>
-                                {(conflictMap.get(l.idx)?.reasons ?? []).map((r, i) => (
-                                  <li key={i}>{r}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          </td>
-                        </tr>
+                        <div
+                          style={{
+                            border: "1px solid #f5c2c2",
+                            background: "#fff0f0",
+                            borderRadius: 10,
+                            padding: 10,
+                            color: "#b42318",
+                            fontSize: 13,
+                          }}
+                        >
+                          <b>❗ {l.idx}회차 문제</b>
+                          <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+                            {(conflictMap.get(l.idx)?.reasons ?? []).map((r, i) => (
+                              <li key={i}>{r}</li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
-                    </>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th
+                          style={{
+                            textAlign: "left",
+                            padding: 10,
+                            borderBottom: `1px solid ${colors.border}`,
+                            color: colors.text,
+                          }}
+                        >
+                          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={(e) => setAllSelected(e.target.checked)}
+                            />
+                            선택
+                          </label>
+                        </th>
+                        {["회차", "날짜(수정 가능)", "강사", "시간(정각)", "룸"].map((h) => (
+                          <th
+                            key={h}
+                            style={{
+                              textAlign: "left",
+                              padding: 10,
+                              borderBottom: `1px solid ${colors.border}`,
+                              color: colors.text,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
 
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <tbody>
+                      {lessons.map((l) => (
+                        <>
+                          <tr
+                            key={l.idx}
+                            id={`lesson-row-${l.idx}`}
+                            style={{
+                              background: hasConflict(l.idx) ? "#fff5f5" : undefined,
+                            }}
+                          >
+                            <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                              <input
+                                type="checkbox"
+                                checked={l.selected}
+                                onChange={() => updateLesson(l.idx, { selected: !l.selected })}
+                              />
+                            </td>
+
+                            <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: colors.text }}>
+                              {hasConflict(l.idx) ? "❗ " : ""}
+                              {l.idx}회차
+                            </td>
+
+                            <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: colors.text }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <div>
+                                  <b>{l.lesson_date}</b>{" "}
+                                  <span style={{ color: colors.textMuted }}>
+                                    ({weekdayLabel[weekdayOf(l.lesson_date)]})
+                                  </span>
+                                </div>
+
+                                <select
+                                  value={weekdayOf(l.lesson_date)}
+                                  onChange={(e) =>
+                                    updateLesson(l.idx, {
+                                      lesson_date: shiftDateToWeekday(l.lesson_date, Number(e.target.value)),
+                                    })
+                                  }
+                                  style={{ ...inputStyle, width: 120 }}
+                                >
+                                  {weekdayLabel.map((d, idx) => (
+                                    <option key={idx} value={idx}>
+                                      {d}요일
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </td>
+
+                            <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                              <select
+                                value={l.teacher_id}
+                                onChange={(e) => updateLesson(l.idx, { teacher_id: e.target.value })}
+                                style={{ ...inputStyle, minWidth: 220 }}
+                              >
+                                <option value="">선택</option>
+                                {teachers.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {teacherLabel(t)}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+
+                            <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                              <select
+                                value={l.lesson_time}
+                                onChange={(e) => updateLesson(l.idx, { lesson_time: e.target.value })}
+                                style={{ ...inputStyle, width: 120 }}
+                              >
+                                {timeOptions.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+
+                            <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                              <select
+                                value={l.room_id}
+                                onChange={(e) => updateLesson(l.idx, { room_id: e.target.value })}
+                                style={{ ...inputStyle, minWidth: 160 }}
+                                disabled={loadingRooms || rooms.length === 0}
+                              >
+                                <option value="">룸 선택</option>
+                                {rooms.map((r) => (
+                                  <option key={r.id} value={r.id}>
+                                    {r.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+
+                          {hasConflict(l.idx) && (
+                            <tr>
+                              <td colSpan={6} style={{ padding: 10 }}>
+                                <div
+                                  style={{
+                                    border: "1px solid #f5c2c2",
+                                    background: "#fff0f0",
+                                    borderRadius: 8,
+                                    padding: 10,
+                                    color: "#b42318",
+                                    fontSize: 13,
+                                  }}
+                                >
+                                  <b>❗ {l.idx}회차 문제</b>
+                                  <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+                                    {(conflictMap.get(l.idx)?.reasons ?? []).map((r, i) => (
+                                      <li key={i}>{r}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <button
                     onClick={createManualClass}
-                    style={primaryButton}
+                    style={{ ...primaryButton, width: isMobile ? "100%" : "auto" }}
                     disabled={loadingUsers || lessons.length === 0}
                   >
                     수강권 생성
@@ -695,7 +895,6 @@ export default function AdminClassesPage() {
                   {createMsg && <span style={{ color: colors.text }}>{createMsg}</span>}
                 </div>
 
-                {/* ✅ 운영자 실수 방지: 충돌 있을 때 안내 */}
                 {conflicts.length > 0 && (
                   <div style={{ color: "#b42318", fontSize: 13 }}>
                     충돌/검증 실패가 있습니다. 빨간색 회차를 수정한 뒤 다시 저장하세요.
@@ -707,5 +906,20 @@ export default function AdminClassesPage() {
         </section>
       </div>
     </AdminLayoutShell>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 6, color: colors.text }}>
+      <span>{label}</span>
+      {children}
+    </label>
   );
 }

@@ -51,6 +51,7 @@ export async function GET(req: Request) {
       .from("profiles")
       .select("id, name")
       .eq("role", "teacher")
+      .eq("is_active", "true")
       .order("name", { ascending: true });
 
     if (teachersErr) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AdminLayoutShell from "@/components/admin/AdminLayoutShell";
 import { authFetch } from "@/lib/authFetch";
 
@@ -30,24 +30,23 @@ type LessonRow = {
 type AvailabilityRow = {
   teacher_id: string;
   teacher_name: string;
-  date: string; // YYYY-MM-DD
-  weekday: number; // 0=Sun..6=Sat
-  start_time: string; // HH:mm:ss or HH:mm
-  end_time: string; // HH:mm:ss or HH:mm
+  date: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
   device_type: "controller" | "turntable" | "both";
 };
 
-// ✅ ADD: practice row
 type PracticeRow = {
   id: string;
   room_id: string | null;
   room_name: string;
 
-  date: string; // YYYY-MM-DD
-  start_time: string | null; // HH:mm
-  end_time: string | null; // HH:mm
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
 
-  start_ts: string | null; // YYYY-MM-DDTHH:mm:00
+  start_ts: string | null;
   end_ts: string | null;
 
   student_id: string | null;
@@ -98,15 +97,11 @@ function normalizeRoom(roomName: string | null | undefined): "A" | "B" | "C" {
   return "A";
 }
 
-// ✅ 슬롯 그룹 키 (date + HH:mm + roomNorm)
 function slotKey(date: string, time: string, roomNorm: "A" | "B" | "C") {
   return `${date}|${clampHHMM(time)}|${roomNorm}`;
 }
 
-// ✅ 고정하고 싶으면 여기에 넣으면 됨
-const teacherColorMap: Record<string, string> = {
-  // "teacher_uuid": "#7c3aed",
-};
+const teacherColorMap: Record<string, string> = {};
 
 function fallbackColorFromKey(key: string) {
   let hash = 0;
@@ -134,21 +129,31 @@ function classTypeLabel(t: string | null) {
 }
 
 export default function AdminLessonsHallSheetPage() {
-  // ===== layout tuning =====
-  const TIME_W = 105;
-  const AVAIL_W = 74; // ✅ 근무 도트 컬럼
-  const COL_W = 100;
+  const [isMobile, setIsMobile] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
-  const HEAD_H1 = 46;
-  const HEAD_H2 = 40;
-  const ROW_H = 38;
+  const scrollWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= 900);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  const TIME_W = isMobile ? 76 : 88;
+  const AVAIL_W = isMobile ? 0 : 58;
+  const COL_W = isMobile ? 74 : 84;
+
+  const HEAD_H1 = isMobile ? 44 : 46;
+  const HEAD_H2 = isMobile ? 38 : 40;
+  const ROW_H = isMobile ? 32 : 38;
 
   const STEP_MIN = 60;
   const DEFAULT_DURATION = 60;
 
   const rooms = ["A", "B", "C"] as const;
 
-  // ✅ 모달 시간 선택 (1시간 단위 고정)
   const HOUR_OPTIONS = useMemo(
     () =>
       Array.from({ length: 24 }).map((_, i) => {
@@ -158,7 +163,6 @@ export default function AdminLessonsHallSheetPage() {
     []
   );
 
-  // ✅ 상태(B안: 소문자 고정)
   const STATUS_ADMIN_CHANGED = "admin_changed";
   const STATUS_CANCELED = "canceled";
   const STATUS_OPTIONS = [
@@ -170,8 +174,6 @@ export default function AdminLessonsHallSheetPage() {
   const [lessons, setLessons] = useState<LessonRow[]>([]);
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // ✅ ADD: practice state
   const [practice, setPractice] = useState<PracticeRow[]>([]);
 
   const [selectedLessonId, setSelectedLessonId] = useState("");
@@ -180,16 +182,10 @@ export default function AdminLessonsHallSheetPage() {
     [lessons, selectedLessonId]
   );
 
-  // ✅ 요일 선택 (근무도트는 선택된 요일 기준으로만 표시)
   const [selectedDow, setSelectedDow] = useState<number | null>(null);
-
-  // ✅ hover tooltip (근무도트)
   const [hoverTime, setHoverTime] = useState<string>("");
-
-  // ✅ 취소 이력 팝오버 open (placed lesson id)
   const [historyOpenFor, setHistoryOpenFor] = useState<string>("");
 
-  // ===== 관리자 강제 수정 (modal) =====
   const [forceEditOpen, setForceEditOpen] = useState(false);
   const [forceSaving, setForceSaving] = useState(false);
 
@@ -212,7 +208,6 @@ export default function AdminLessonsHallSheetPage() {
     return { days, from: ymd(days[0]), to: ymd(days[6]) };
   }, [weekStart]);
 
-  // ✅ load는 useCallback으로 고정 + 포커스/가시성 복귀 시 재호출 가능
   const load = useCallback(async () => {
     setLoading(true);
     const qs = new URLSearchParams();
@@ -225,14 +220,14 @@ export default function AdminLessonsHallSheetPage() {
       alert(data.error ?? "레슨 현황 조회 실패");
       setLessons([]);
       setAvailability([]);
-      setPractice([]); // ✅ ADD
+      setPractice([]);
       setLoading(false);
       return;
     }
 
     setLessons((data.lessons ?? data.rows ?? []) as LessonRow[]);
     setAvailability((data.availability ?? []) as AvailabilityRow[]);
-    setPractice((data.practice_reservations ?? []) as PracticeRow[]); // ✅ ADD
+    setPractice((data.practice_reservations ?? []) as PracticeRow[]);
     setLoading(false);
   }, [week.from, week.to]);
 
@@ -240,7 +235,6 @@ export default function AdminLessonsHallSheetPage() {
     load();
   }, [load]);
 
-  // ✅ 탭/창 다시 보면 자동 새로고침
   useEffect(() => {
     const onFocus = () => load();
     const onVisible = () => {
@@ -300,7 +294,7 @@ export default function AdminLessonsHallSheetPage() {
     }
 
     const payloadCommon = {
-      status: feStatus, // admin_changed or canceled
+      status: feStatus,
       reason: feReason || null,
     };
 
@@ -346,13 +340,10 @@ export default function AdminLessonsHallSheetPage() {
     alert(isCancelMode ? "취소 처리 완료" : "수정 완료");
     setForceEditOpen(false);
     setForceSaving(false);
-
-    // ✅ 저장 후 최신 반영
     setSelectedLessonId(selectedLesson.id);
     await load();
   };
 
-  // ===== time range by lessons + availability =====
   const timeRange = useMemo(() => {
     let minM = 12 * 60;
     let maxM = 23 * 60;
@@ -402,7 +393,6 @@ export default function AdminLessonsHallSheetPage() {
     return arr;
   }, [timeRange]);
 
-  // ===== columns (date x room) =====
   type Col = { dateStr: string; room: (typeof rooms)[number] };
   const cols = useMemo<Col[]>(() => {
     const out: Col[] = [];
@@ -413,7 +403,10 @@ export default function AdminLessonsHallSheetPage() {
     return out;
   }, [week.days]);
 
-  // ✅ 슬롯별 lessons 그룹 (date+time+roomNorm)
+  // ✅ 모바일에서도 전체 요일을 다 그린다.
+  // selectedDow는 "강조/이동" 용도로만 사용.
+  const displayCols = cols;
+
   const lessonsBySlot = useMemo(() => {
     const m = new Map<string, LessonRow[]>();
     for (const l of lessons) {
@@ -426,7 +419,6 @@ export default function AdminLessonsHallSheetPage() {
     return m;
   }, [lessons]);
 
-  // ✅ ADD: practice 슬롯 그룹 (2시간이면 2칸 표시)
   const practiceBySlot = useMemo(() => {
     const m = new Map<string, PracticeRow[]>();
 
@@ -440,7 +432,6 @@ export default function AdminLessonsHallSheetPage() {
       if (!Number.isFinite(stM) || !Number.isFinite(edM)) continue;
       if (edM <= stM) continue;
 
-      // ✅ 1시간 슬롯 단위로 분할: [start, end) 범위에 포함되는 시간칸 모두 넣기
       for (let cur = stM; cur < edM; cur += STEP_MIN) {
         const t = `${pad2(Math.floor(cur / 60))}:${pad2(cur % 60)}`;
         const k = slotKey(p.date, t, roomNorm);
@@ -453,13 +444,11 @@ export default function AdminLessonsHallSheetPage() {
     return m;
   }, [practice]);
 
-  // ===== place lessons into grid (메인 1개 + 취소 이력) =====
   type PlacedLesson = LessonRow & {
     colIndex: number;
     rowStart: number;
     rowSpan: number;
     room_norm: "A" | "B" | "C";
-
     canceled_count: number;
     canceled_list: LessonRow[];
     has_active: boolean;
@@ -467,7 +456,7 @@ export default function AdminLessonsHallSheetPage() {
 
   const placedLessons = useMemo<PlacedLesson[]>(() => {
     const mapCol = new Map<string, number>();
-    cols.forEach((c, idx) => mapCol.set(`${c.dateStr}|${c.room}`, idx));
+    displayCols.forEach((c, idx) => mapCol.set(`${c.dateStr}|${c.room}`, idx));
 
     const out: PlacedLesson[] = [];
 
@@ -499,9 +488,8 @@ export default function AdminLessonsHallSheetPage() {
     });
 
     return out;
-  }, [lessonsBySlot, cols, timeRange]);
+  }, [lessonsBySlot, displayCols, timeRange]);
 
-  // ✅ Legend: availability(근무) 기준 강사만
   const legendTeachers = useMemo(() => {
     const seen = new Map<string, { id: string; name: string; color: string }>();
 
@@ -521,13 +509,16 @@ export default function AdminLessonsHallSheetPage() {
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [availability]);
 
-  // ✅ 선택된 요일 기준 근무(availability) 그룹핑:
   type AvailTeacher = { id: string; name: string };
   type AvailDetail = AvailTeacher & { ranges: { start: string; end: string }[] };
 
   const availByTimeForSelectedDow = useMemo(() => {
-    if (selectedDow === null)
-      return { byTime: new Map<string, AvailTeacher[]>(), detailByTeacherId: new Map<string, AvailDetail>() };
+    if (selectedDow === null) {
+      return {
+        byTime: new Map<string, AvailTeacher[]>(),
+        detailByTeacherId: new Map<string, AvailDetail>(),
+      };
+    }
 
     const rows = availability.filter((a) => Number(a.weekday) === selectedDow);
 
@@ -538,13 +529,16 @@ export default function AdminLessonsHallSheetPage() {
       const start = clampHHMM(a.start_time);
       const end = clampHHMM(a.end_time);
 
-      const cur = detailByTeacherId.get(id) ?? { id, name, ranges: [] as { start: string; end: string }[] };
+      const cur = detailByTeacherId.get(id) ?? {
+        id,
+        name,
+        ranges: [] as { start: string; end: string }[],
+      };
       cur.name = name;
       cur.ranges.push({ start, end });
       detailByTeacherId.set(id, cur);
     });
 
-    // ranges 정리(정렬 + 겹침 병합)
     detailByTeacherId.forEach((d) => {
       const ranges = d.ranges
         .filter((r) => r.start && r.end)
@@ -584,7 +578,10 @@ export default function AdminLessonsHallSheetPage() {
 
     const byTime = new Map<string, AvailTeacher[]>();
     map.forEach((m2, t) => {
-      byTime.set(t, Array.from(m2.values()).sort((a, b) => String(a.id).localeCompare(String(b.id))));
+      byTime.set(
+        t,
+        Array.from(m2.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      );
     });
 
     return { byTime, detailByTeacherId };
@@ -614,38 +611,91 @@ export default function AdminLessonsHallSheetPage() {
     );
   };
 
+  const scrollToDate = useCallback(
+    (dateStr: string) => {
+      const wrap = scrollWrapRef.current;
+      if (!wrap) return;
+
+      const uniqueDates = Array.from(new Set(displayCols.map((c) => c.dateStr)));
+      const dayIndex = uniqueDates.findIndex((d) => d === dateStr);
+      if (dayIndex < 0) return;
+
+      const leftFixed = isMobile ? TIME_W : TIME_W + AVAIL_W;
+      const x = leftFixed + dayIndex * rooms.length * COL_W;
+
+      wrap.scrollTo({
+        left: Math.max(0, x - 8),
+        behavior: "smooth",
+      });
+    },
+    [displayCols, isMobile, TIME_W, AVAIL_W, COL_W, rooms.length]
+  );
+
   const goPrevWeek = () => {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() - 7);
     setSelectedLessonId("");
     setHistoryOpenFor("");
     setHoverTime("");
-    setSelectedDow(null);
     setWeekStart(ymd(startOfWeek(d)));
   };
+
   const goNextWeek = () => {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setSelectedLessonId("");
     setHistoryOpenFor("");
     setHoverTime("");
-    setSelectedDow(null);
     setWeekStart(ymd(startOfWeek(d)));
   };
+
   const goThisWeek = () => {
     setSelectedLessonId("");
     setHistoryOpenFor("");
     setHoverTime("");
-    setSelectedDow(null);
-    setWeekStart(ymd(startOfWeek(new Date())));
+
+    const today = new Date();
+    setSelectedDow(today.getDay());
+    setWeekStart(ymd(startOfWeek(today)));
+
+    setTimeout(() => {
+      scrollToDate(ymd(today));
+    }, 80);
   };
 
-  const gridColsTemplate = useMemo(() => `${TIME_W}px ${AVAIL_W}px repeat(${cols.length}, ${COL_W}px)`, [cols.length]);
+  useEffect(() => {
+    if (selectedDow === null) {
+      setSelectedDow(new Date().getDay());
+    }
+  }, [selectedDow]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const todayStr = ymd(new Date());
+    const inThisWeek = week.days.some((d) => ymd(d) === todayStr);
+    if (inThisWeek) {
+      const t = setTimeout(() => scrollToDate(todayStr), 120);
+      return () => clearTimeout(t);
+    }
+  }, [isMobile, week.days, scrollToDate]);
+
+  const gridColsTemplate = useMemo(() => {
+    if (isMobile) {
+      return `${TIME_W}px repeat(${displayCols.length}, ${COL_W}px)`;
+    }
+    return `${TIME_W}px ${AVAIL_W}px repeat(${displayCols.length}, ${COL_W}px)`;
+  }, [displayCols.length, isMobile, TIME_W, AVAIL_W, COL_W]);
+
+  const gridMinWidth = useMemo(() => {
+    if (isMobile) return TIME_W + displayCols.length * COL_W;
+    return TIME_W + AVAIL_W + displayCols.length * COL_W;
+  }, [isMobile, TIME_W, AVAIL_W, COL_W, displayCols.length]);
+
+  const uniqueDates = useMemo(() => Array.from(new Set(displayCols.map((c) => c.dateStr))), [displayCols]);
 
   return (
     <AdminLayoutShell title="레슨 현황 (주간 · 홀별)">
-      <div style={{ maxWidth: 1600 }}>
-        {/* Controls + Legend */}
+      <div style={{ width: "100%", maxWidth: 1600, minWidth: 0 }}>
         <div
           style={{
             border: "1px solid #e5e5e5",
@@ -657,6 +707,8 @@ export default function AdminLessonsHallSheetPage() {
             gap: 10,
             alignItems: "center",
             flexWrap: "wrap",
+            width: "100%",
+            boxSizing: "border-box",
           }}
         >
           <div style={{ fontWeight: 900 }}>홀별 주간표</div>
@@ -722,38 +774,35 @@ export default function AdminLessonsHallSheetPage() {
             새로고침
           </button>
 
-          <div style={{ marginLeft: "auto", color: "#666", fontSize: 13 }}>
+          <div style={{ marginLeft: "auto", color: "#666", fontSize: 13, width: "100%" }}>
             {loading ? "불러오는 중..." : `레슨 ${lessons.length}개 · 강사 ${legendTeachers.length}명`}
           </div>
 
-          {/* Legend */}
-          {legendTeachers.length > 0 && (
-            <div style={{ width: "100%", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
-              <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>강사 색상:</div>
-              {legendTeachers.slice(0, 12).map((t) => (
-                <div key={t.id ?? t.name} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <span
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 999,
-                      background: t.color,
-                      display: "inline-block",
-                      border: "1px solid rgba(0,0,0,0.15)",
-                    }}
-                  />
-                  <span style={{ fontSize: 12, color: "#111", fontWeight: 900 }}>{t.name}</span>
-                </div>
-              ))}
-              {legendTeachers.length > 12 && (
-                <span style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>+{legendTeachers.length - 12}</span>
-              )}
-            </div>
-          )}
+          <div
+            style={{
+              width: "100%",
+              marginTop: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              onClick={() => setInfoOpen((v) => !v)}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: "#fff",
+                color: "#111",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              {infoOpen ? "안내 접기" : "안내/범례 보기"}
+            </button>
 
-          {/* 요일 선택 안내 */}
-          <div style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>요일 선택하면 근무 도트가 그 요일 기준으로 표시돼요.</div>
             {selectedDow !== null ? (
               <button
                 onClick={() => {
@@ -761,43 +810,154 @@ export default function AdminLessonsHallSheetPage() {
                   setHoverTime("");
                 }}
                 style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
+                  padding: "8px 12px",
+                  borderRadius: 10,
                   border: "1px solid #ddd",
                   background: "#fff",
-                  cursor: "pointer",
-                  fontWeight: 900,
-                  fontSize: 12,
                   color: "#111",
+                  fontWeight: 900,
+                  cursor: "pointer",
                 }}
               >
                 요일 선택 해제
               </button>
             ) : null}
           </div>
+
+          {isMobile && (
+            <div
+              style={{
+                width: "100%",
+                display: "flex",
+                gap: 8,
+                overflowX: "auto",
+                WebkitOverflowScrolling: "touch",
+                paddingBottom: 2,
+              }}
+            >
+              {week.days.map((d) => {
+                const dateStr = ymd(d);
+                const dow = d.getDay();
+                const active = selectedDow === dow;
+                const today = dateStr === ymd(new Date());
+
+                return (
+                  <button
+                    key={dateStr}
+                    onClick={() => {
+                      setSelectedDow(dow);
+                      setHoverTime("");
+                      scrollToDate(dateStr);
+                    }}
+                    style={{
+                      flex: "0 0 auto",
+                      padding: "8px 12px",
+                      borderRadius: 999,
+                      border: active ? "1px solid #111" : "1px solid #ddd",
+                      background: active ? "#111" : today ? "#f5f5f5" : "#fff",
+                      color: active ? "#fff" : "#111",
+                      fontWeight: 900,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {DOW_KR[dow]}({d.getDate()})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {infoOpen && (
+            <>
+              {legendTeachers.length > 0 && (
+                <div
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    marginTop: 6,
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>강사 색상:</div>
+                  {legendTeachers.slice(0, 12).map((t) => (
+                    <div key={t.id ?? t.name} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span
+                        style={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: 999,
+                          background: t.color,
+                          display: "inline-block",
+                          border: "1px solid rgba(0,0,0,0.15)",
+                        }}
+                      />
+                      <span style={{ fontSize: 12, color: "#111", fontWeight: 900 }}>{t.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div
+                style={{
+                  width: "100%",
+                  marginTop: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
+                  {isMobile
+                    ? "모바일에서는 전체 요일이 가로 스크롤로 보이고, 요일 버튼 누르면 해당 날짜로 이동해요."
+                    : "요일 선택하면 근무 도트가 그 요일 기준으로 표시돼요."}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Sheet */}
         <div
+          ref={scrollWrapRef}
           style={{
             border: "1px solid #e5e5e5",
             borderRadius: 12,
             background: "#fff",
-            overflow: "auto",
-            height: "calc(100vh - 240px)",
+            overflowX: "auto",
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            height: isMobile ? "calc(100vh - 230px)" : "calc(100vh - 240px)",
+            maxHeight: isMobile ? "calc(100vh - 230px)" : "calc(100vh - 240px)",
+            width: "100%",
           }}
         >
-          {/* Sticky headers */}
-          <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#fff" }}>
-            {/* Header row 1: Day */}
-            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "2px solid #eee" }}>
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 50,
+              background: "#fff",
+              minWidth: gridMinWidth,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: gridColsTemplate,
+                borderBottom: "2px solid #eee",
+              }}
+            >
               <div
                 style={{
                   position: "sticky",
                   left: 0,
                   zIndex: 60,
-                  gridColumn: "span 2",
-                  height: 46,
+                  gridColumn: isMobile ? "span 1" : "span 2",
+                  height: HEAD_H1,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -807,15 +967,17 @@ export default function AdminLessonsHallSheetPage() {
                   borderRight: "1px solid #eee",
                 }}
               >
-                시간/근무
+                {isMobile ? "시간" : "시간/근무"}
               </div>
 
-              {week.days.map((d) => {
-                const dateStr = ymd(d);
-                const day = d.getDay();
-                const labelDay = `${DOW_KR[day]}(${d.getDate()})`;
+              {uniqueDates.map((dateStr) => {
+                const date = parseYmd(dateStr);
+                const day = date.getDay();
+                const labelDay = `${DOW_KR[day]}(${date.getDate()})`;
                 const isToday = dateStr === ymd(new Date());
                 const isSelected = selectedDow === day;
+
+                const spanCount = displayCols.filter((c) => c.dateStr === dateStr).length;
 
                 return (
                   <button
@@ -824,10 +986,11 @@ export default function AdminLessonsHallSheetPage() {
                     onClick={() => {
                       setHoverTime("");
                       setSelectedDow((prev) => (prev === day ? null : day));
+                      if (isMobile) scrollToDate(dateStr);
                     }}
                     style={{
-                      gridColumn: `span ${rooms.length}`,
-                      height: 46,
+                      gridColumn: `span ${spanCount}`,
+                      height: HEAD_H1,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -838,8 +1001,9 @@ export default function AdminLessonsHallSheetPage() {
                       letterSpacing: 0.2,
                       cursor: "pointer",
                       outline: "none",
+                      fontSize: isMobile ? 12 : 16,
                     }}
-                    title="클릭하면 해당 요일 근무 도트를 표시해요"
+                    title={isMobile ? "해당 날짜로 이동" : "클릭하면 해당 요일 기준으로 보여요"}
                   >
                     {labelDay}
                   </button>
@@ -847,34 +1011,50 @@ export default function AdminLessonsHallSheetPage() {
               })}
             </div>
 
-            {/* Header row 2: Rooms */}
-            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #d1d5db" }}>
-              <div style={{ position: "sticky", left: 0, zIndex: 60, height: 40, background: "#fff", borderRight: "1px solid #eee" }} />
-
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: gridColsTemplate,
+                borderBottom: "1px solid #d1d5db",
+              }}
+            >
               <div
                 style={{
                   position: "sticky",
-                  left: 105,
+                  left: 0,
                   zIndex: 60,
-                  height: 40,
+                  height: HEAD_H2,
                   background: "#fff",
                   borderRight: "1px solid #eee",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 1000,
-                  fontSize: 12,
-                  color: selectedDow === null ? "#aaa" : "#666",
                 }}
-              >
-                근무
-              </div>
+              />
 
-              {cols.map((c, idx) => (
+              {!isMobile && (
+                <div
+                  style={{
+                    position: "sticky",
+                    left: TIME_W,
+                    zIndex: 60,
+                    height: HEAD_H2,
+                    background: "#fff",
+                    borderRight: "1px solid #eee",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: 1000,
+                    fontSize: 12,
+                    color: selectedDow === null ? "#aaa" : "#666",
+                  }}
+                >
+                  근무
+                </div>
+              )}
+
+              {displayCols.map((c, idx) => (
                 <div
                   key={`${c.dateStr}|${c.room}|${idx}`}
                   style={{
-                    height: 40,
+                    height: HEAD_H2,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -882,7 +1062,7 @@ export default function AdminLessonsHallSheetPage() {
                     background: "#fff",
                     borderRight: "1px solid #f0f0f0",
                     color: "#111",
-                    fontSize: 13,
+                    fontSize: isMobile ? 15 : 13,
                   }}
                 >
                   {c.room}
@@ -891,16 +1071,15 @@ export default function AdminLessonsHallSheetPage() {
             </div>
           </div>
 
-          {/* Body */}
           <div
             style={{
               position: "relative",
               display: "grid",
               gridTemplateColumns: gridColsTemplate,
               gridTemplateRows: `repeat(${slotTimes.length}, ${ROW_H}px)`,
+              minWidth: gridMinWidth,
             }}
           >
-            {/* Time column */}
             {slotTimes.map((t, rIdx) => (
               <div
                 key={`time-${t}`}
@@ -925,104 +1104,107 @@ export default function AdminLessonsHallSheetPage() {
               </div>
             ))}
 
-            {/* Availability dots column */}
-            {slotTimes.map((t, rIdx) => {
-              const teachers = selectedDow === null ? [] : availByTimeForSelectedDow.byTime.get(t) ?? [];
-              const showTooltip = selectedDow !== null && hoverTime === t && teachers.length > 0;
+            {!isMobile &&
+              slotTimes.map((t, rIdx) => {
+                const teachers = selectedDow === null ? [] : availByTimeForSelectedDow.byTime.get(t) ?? [];
+                const showTooltip = selectedDow !== null && hoverTime === t && teachers.length > 0;
 
-              return (
-                <div
-                  key={`avail-${t}`}
-                  style={{
-                    position: "sticky",
-                    left: TIME_W,
-                    zIndex: 45,
-                    gridColumn: 2,
-                    gridRow: rIdx + 1,
-                    background: "#fff",
-                    borderRight: "2px solid #d1d5db",
-                    borderBottom: "2px solid #d1d5db",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: selectedDow !== null && teachers.length > 0 ? "help" : "default",
-                    opacity: selectedDow === null ? 0.35 : 1,
-                  }}
-                  onMouseEnter={() => {
-                    if (selectedDow === null) return;
-                    setHoverTime(t);
-                  }}
-                  onMouseLeave={() => setHoverTime("")}
-                >
-                  {selectedDow === null ? null : renderAvailDots(teachers)}
+                return (
+                  <div
+                    key={`avail-${t}`}
+                    style={{
+                      position: "sticky",
+                      left: TIME_W,
+                      zIndex: 45,
+                      gridColumn: 2,
+                      gridRow: rIdx + 1,
+                      background: "#fff",
+                      borderRight: "2px solid #d1d5db",
+                      borderBottom: "2px solid #d1d5db",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: selectedDow !== null && teachers.length > 0 ? "help" : "default",
+                      opacity: selectedDow === null ? 0.35 : 1,
+                    }}
+                    onMouseEnter={() => {
+                      if (selectedDow === null) return;
+                      setHoverTime(t);
+                    }}
+                    onMouseLeave={() => setHoverTime("")}
+                  >
+                    {selectedDow === null ? null : renderAvailDots(teachers)}
 
-                  {showTooltip && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: "100%",
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        marginLeft: 10,
-                        width: 260,
-                        maxHeight: 280,
-                        overflow: "auto",
-                        border: "1px solid #e5e5e5",
-                        borderRadius: 12,
-                        background: "#fff",
-                        boxShadow: "0 10px 26px rgba(0,0,0,0.12)",
-                        padding: 10,
-                        zIndex: 999,
-                      }}
-                    >
-                      <div style={{ fontWeight: 1000, fontSize: 12, color: "#111" }}>
-                        {DOW_KR[selectedDow ?? 0]} · {t} 근무 가능 ({teachers.length}명)
-                      </div>
+                    {showTooltip && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: "100%",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          marginLeft: 10,
+                          width: 260,
+                          maxHeight: 280,
+                          overflow: "auto",
+                          border: "1px solid #e5e5e5",
+                          borderRadius: 12,
+                          background: "#fff",
+                          boxShadow: "0 10px 26px rgba(0,0,0,0.12)",
+                          padding: 10,
+                          zIndex: 999,
+                        }}
+                      >
+                        <div style={{ fontWeight: 1000, fontSize: 12, color: "#111" }}>
+                          {DOW_KR[selectedDow ?? 0]} · {t} 근무 가능 ({teachers.length}명)
+                        </div>
 
-                      <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-                        {teachers.map((x) => {
-                          const detail = availByTimeForSelectedDow.detailByTeacherId.get(x.id);
-                          const ranges = detail?.ranges ?? [];
-                          return (
-                            <div key={x.id} style={{ display: "grid", gap: 2 }}>
-                              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                <span
-                                  style={{
-                                    width: 10,
-                                    height: 10,
-                                    borderRadius: 999,
-                                    background: pickTeacherColor(x.id, x.name),
-                                    border: "1px solid rgba(0,0,0,0.15)",
-                                    display: "inline-block",
-                                    opacity: 0.26,
-                                  }}
-                                />
-                                <span style={{ fontSize: 12, color: "#111", fontWeight: 900 }}>{x.name}</span>
-                              </div>
-                              {ranges.length > 0 ? (
-                                <div style={{ fontSize: 11, color: "#666", fontWeight: 900, paddingLeft: 18 }}>
-                                  {ranges.map((r, idx) => (
-                                    <span key={`${x.id}-${idx}`}>
-                                      {r.start}–{r.end}
-                                      {idx < ranges.length - 1 ? " · " : ""}
-                                    </span>
-                                  ))}
+                        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                          {teachers.map((x) => {
+                            const detail = availByTimeForSelectedDow.detailByTeacherId.get(x.id);
+                            const ranges = detail?.ranges ?? [];
+                            return (
+                              <div key={x.id} style={{ display: "grid", gap: 2 }}>
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span
+                                    style={{
+                                      width: 10,
+                                      height: 10,
+                                      borderRadius: 999,
+                                      background: pickTeacherColor(x.id, x.name),
+                                      border: "1px solid rgba(0,0,0,0.15)",
+                                      display: "inline-block",
+                                      opacity: 0.26,
+                                    }}
+                                  />
+                                  <span style={{ fontSize: 12, color: "#111", fontWeight: 900 }}>
+                                    {x.name}
+                                  </span>
                                 </div>
-                              ) : (
-                                <div style={{ fontSize: 11, color: "#888", paddingLeft: 18 }}>근무시간 정보 없음</div>
-                              )}
-                            </div>
-                          );
-                        })}
+                                {ranges.length > 0 ? (
+                                  <div style={{ fontSize: 11, color: "#666", fontWeight: 900, paddingLeft: 18 }}>
+                                    {ranges.map((r, idx) => (
+                                      <span key={`${x.id}-${idx}`}>
+                                        {r.start}–{r.end}
+                                        {idx < ranges.length - 1 ? " · " : ""}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 11, color: "#888", paddingLeft: 18 }}>
+                                    근무시간 정보 없음
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    )}
+                  </div>
+                );
+              })}
 
-            {/* Background cells */}
-            {cols.map((col, cIdx) =>
+            {displayCols.map((col, cIdx) =>
               slotTimes.map((__, rIdx) => {
                 const date = parseYmd(col.dateStr);
                 const day = date.getDay();
@@ -1032,7 +1214,7 @@ export default function AdminLessonsHallSheetPage() {
                   <div
                     key={`bg-${cIdx}-${rIdx}`}
                     style={{
-                      gridColumn: cIdx + 3,
+                      gridColumn: cIdx + (isMobile ? 2 : 3),
                       gridRow: rIdx + 1,
                       borderBottom: "2px solid #d1d5db",
                       borderRight: "2px solid #d1d5db",
@@ -1043,31 +1225,30 @@ export default function AdminLessonsHallSheetPage() {
               })
             )}
 
-            {/* Practice blocks (연습실 오렌지) */}
             {Array.from(practiceBySlot.entries()).flatMap(([key, list]) => {
               const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
 
-              const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
+              const colIndex = displayCols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
               if (colIndex === -1) return [];
 
               const stMin = minutesOf(hhmm);
               const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
-              const rowSpan = 1; // 1시간 슬롯 고정
+              const rowSpan = 1;
 
               return list.map((p) => (
                 <div
                   key={`${p.id}-${key}`}
                   style={{
-                    gridColumn: colIndex + 3,
+                    gridColumn: colIndex + (isMobile ? 2 : 3),
                     gridRow: `${rowStart} / span ${rowSpan}`,
                     margin: 4,
                     borderRadius: 10,
                     border: "2px solid rgba(0,0,0,0.12)",
-                    background: "#f97316", // 🟧 오렌지
+                    background: "#f97316",
                     color: "#fff",
-                    padding: "6px 8px",
+                    padding: isMobile ? "4px 6px" : "6px 8px",
                     fontWeight: 900,
-                    fontSize: 12,
+                    fontSize: isMobile ? 11 : 12,
                     display: "flex",
                     alignItems: "center",
                     overflow: "hidden",
@@ -1083,12 +1264,11 @@ export default function AdminLessonsHallSheetPage() {
               ));
             })}
 
-            {/* Lesson blocks (메인 1개 + 취소 이력 뱃지/팝오버) */}
             {placedLessons.map((l) => {
               const isSelected = selectedLessonId === l.id;
               const teacherColor = pickTeacherColor(l.teacher_id, l.teacher_name);
 
-              const mainIsCanceled = String(l.status ?? "") === STATUS_CANCELED; // active 없는 슬롯일 때
+              const mainIsCanceled = String(l.status ?? "") === STATUS_CANCELED;
               const bg = mainIsCanceled ? "rgba(0,0,0,0.08)" : teacherColor;
 
               const showHistoryBadge = l.has_active && l.canceled_count > 0;
@@ -1099,7 +1279,7 @@ export default function AdminLessonsHallSheetPage() {
                   key={l.id}
                   onClick={() => setSelectedLessonId(l.id)}
                   style={{
-                    gridColumn: l.colIndex + 3,
+                    gridColumn: l.colIndex + (isMobile ? 2 : 3),
                     gridRow: `${l.rowStart} / span ${l.rowSpan}`,
                     margin: 4,
                     borderRadius: 10,
@@ -1110,20 +1290,20 @@ export default function AdminLessonsHallSheetPage() {
                     color: mainIsCanceled ? "#111" : "#fff",
                     cursor: "pointer",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: isMobile ? "5px 6px" : "8px 10px",
                     display: "flex",
                     alignItems: "center",
                     boxShadow: isSelected ? "0 6px 18px rgba(0,0,0,0.18)" : "none",
                     overflow: "hidden",
                     position: "relative",
                     zIndex: 10,
-                    minHeight: 28,
+                    minHeight: 26,
                     opacity: mainIsCanceled ? 0.55 : 1,
                   }}
                   title={`${l.lesson_date} ${clampHHMM(l.lesson_time)} / ${l.room_norm}홀\n${l.student_name} / ${l.teacher_name}\nstatus=${l.status}`}
                   onMouseLeave={() => setHistoryOpenFor("")}
                 >
-                  {showHistoryBadge && (
+                  {showHistoryBadge && !isMobile && (
                     <span
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1148,7 +1328,7 @@ export default function AdminLessonsHallSheetPage() {
                     </span>
                   )}
 
-                  {showHistoryBadge && popOpen && (
+                  {showHistoryBadge && popOpen && !isMobile && (
                     <div
                       onClick={(e) => e.stopPropagation()}
                       style={{
@@ -1187,9 +1367,6 @@ export default function AdminLessonsHallSheetPage() {
                             </div>
                           </div>
                         ))}
-                        {l.canceled_count > 10 && (
-                          <div style={{ fontSize: 11, color: "#666", fontWeight: 900 }}>+ {l.canceled_count - 10}건 더 있음</div>
-                        )}
                       </div>
                     </div>
                   )}
@@ -1197,8 +1374,8 @@ export default function AdminLessonsHallSheetPage() {
                   <div
                     style={{
                       fontWeight: 1100,
-                      fontSize: 13,
-                      lineHeight: "16px",
+                      fontSize: isMobile ? 10 : 13,
+                      lineHeight: isMobile ? "12px" : "16px",
                       overflow: "hidden",
                       whiteSpace: "nowrap",
                       textOverflow: "ellipsis",
@@ -1206,24 +1383,26 @@ export default function AdminLessonsHallSheetPage() {
                       textShadow: mainIsCanceled ? "none" : "0 1px 1px rgba(0,0,0,0.18)",
                       display: "flex",
                       alignItems: "center",
-                      gap: 8,
+                      gap: 6,
                     }}
                   >
                     {mainIsCanceled ? (
                       <>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            padding: "2px 8px",
-                            borderRadius: 999,
-                            border: "1px solid rgba(0,0,0,0.25)",
-                            background: "rgba(255,255,255,0.75)",
-                            fontSize: 12,
-                            fontWeight: 1100,
-                          }}
-                        >
-                          취소
-                        </span>
+                        {!isMobile && (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              border: "1px solid rgba(0,0,0,0.25)",
+                              background: "rgba(255,255,255,0.75)",
+                              fontSize: 12,
+                              fontWeight: 1100,
+                            }}
+                          >
+                            취소
+                          </span>
+                        )}
                         <span style={{ fontWeight: 1000, color: "#111" }}>{l.student_name}</span>
                       </>
                     ) : (
@@ -1236,18 +1415,26 @@ export default function AdminLessonsHallSheetPage() {
           </div>
         </div>
 
-        {/* Detail */}
         <div style={{ marginTop: 12 }}>
           {!selectedLesson ? (
             <div style={{ color: "#666", fontSize: 13 }}>블록 클릭하면 상세가 보여요.</div>
           ) : (
             <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
                 <b>
-                  {selectedLesson.lesson_date} {clampHHMM(selectedLesson.lesson_time)} · {normalizeRoom(selectedLesson.room_name)}홀
+                  {selectedLesson.lesson_date} {clampHHMM(selectedLesson.lesson_time)} ·{" "}
+                  {normalizeRoom(selectedLesson.room_name)}홀
                 </b>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <button
                     onClick={openForceEdit}
                     style={{
@@ -1297,7 +1484,9 @@ export default function AdminLessonsHallSheetPage() {
                 </div>
                 <div>
                   수강권: <b>{classTypeLabel(selectedLesson.class_type)}</b>
-                  {selectedLesson.total_lessons ? <span style={{ color: "#666" }}> · 총 {selectedLesson.total_lessons}회</span> : null}
+                  {selectedLesson.total_lessons ? (
+                    <span style={{ color: "#666" }}> · 총 {selectedLesson.total_lessons}회</span>
+                  ) : null}
                 </div>
                 <div>
                   진행:{" "}
@@ -1312,7 +1501,6 @@ export default function AdminLessonsHallSheetPage() {
         </div>
       </div>
 
-      {/* ===== Force Edit Modal ===== */}
       {forceEditOpen && selectedLesson && (
         <div
           style={{
@@ -1335,6 +1523,9 @@ export default function AdminLessonsHallSheetPage() {
               border: "1px solid #eee",
               padding: 14,
               boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              WebkitOverflowScrolling: "touch",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1360,8 +1551,14 @@ export default function AdminLessonsHallSheetPage() {
               ⚠️ 근무시간/마감/정책 무시하고 바로 수정됩니다. 같은 시간/같은 룸 충돌은 저장 시 경고합니다.
             </div>
 
-            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {/* 상태 */}
+            <div
+              style={{
+                marginTop: 12,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 10,
+              }}
+            >
               <div style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>상태</div>
                 <select
@@ -1474,7 +1671,7 @@ export default function AdminLessonsHallSheetPage() {
               />
             </div>
 
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
               <button
                 onClick={() => setForceEditOpen(false)}
                 disabled={forceSaving}

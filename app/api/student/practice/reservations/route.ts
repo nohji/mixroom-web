@@ -20,11 +20,18 @@ function isValidYmd(s: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ""));
 }
 
-// ✅ KST 기준 today (UTC로 인해 하루 밀리는 문제 방지)
+// ✅ KST 기준 today
 function todayYmdKST() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   return kst.toISOString().slice(0, 10);
+}
+
+function addDaysYmd(baseYmd: string, days: number) {
+  const [y, m, d] = baseYmd.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 export async function POST(req: Request) {
@@ -43,8 +50,18 @@ export async function POST(req: Request) {
   if (!date || !isValidYmd(date)) return json({ error: "DATE_REQUIRED" }, 400);
   if (times.length === 0) return json({ error: "TIME_REQUIRED" }, 400);
 
-  // ===== 날짜 과거 금지 (KST 기준) =====
-  if (date < todayYmdKST()) return json({ error: "PAST_DATE_NOT_ALLOWED" }, 400);
+  // ===== 예약 정책 (KST 기준) =====
+  const today = todayYmdKST();
+  const minDate = addDaysYmd(today, 2);   // 오늘 +2일
+  const maxDate = addDaysYmd(today, 30);  // 오늘 +30일
+
+  if (date < minDate) {
+    return json({ error: "TOO_SOON" }, 400);
+  }
+
+  if (date > maxDate) {
+    return json({ error: "TOO_FAR" }, 400);
+  }
 
   // ===== 시간 개수 제한 =====
   if (times.length > 2) return json({ error: "MAX_2_HOURS" }, 400);
@@ -57,18 +74,20 @@ export async function POST(req: Request) {
     if (!isValidTimeFormat(t)) return json({ error: "INVALID_TIME_FORMAT" }, 400);
   }
 
-  // ===== 오늘 이미 예약된 개수 확인 (1차 방어) =====
+  // ===== 같은 날짜 내 기존 활성 예약 개수 확인 (1차 방어) =====
   const { data: existing, error: exErr } = await supabaseServer
     .from("practice_reservations")
     .select("id")
     .eq("student_id", guard.studentUserId)
     .eq("date", date)
-    .eq("status", "reserved");
+    .in("status", ["PENDING", "APPROVED"]);
 
   if (exErr) return json({ error: exErr.message }, 500);
 
   const reservedCount = existing?.length ?? 0;
-  if (reservedCount + times.length > 2) return json({ error: "DAILY_LIMIT_EXCEEDED" }, 400);
+  if (reservedCount + times.length > 2) {
+    return json({ error: "DAILY_LIMIT_EXCEEDED" }, 400);
+  }
 
   // ===== RPC 호출 =====
   const { data, error } = await supabaseServer.rpc("practice_create_reservations", {
@@ -76,11 +95,10 @@ export async function POST(req: Request) {
     p_room_id: room_id,
     p_date: date,
     p_times: times,
-    p_device_type: device_type, // 현재 테이블에 컬럼 없어도 RPC 파라미터로는 OK
+    p_device_type: device_type,
   });
 
   if (error) {
-    // RPC raise exception 메시지 그대로 내려감
     return json({ error: error.message }, 400);
   }
 

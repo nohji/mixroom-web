@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TeacherShell from "@/components/TeacherShell";
 import { authFetch } from "@/lib/authFetch";
 
 type LessonRow = {
   id: string;
   lesson_date: string;
-  lesson_time: string; // "HH:mm"
+  lesson_time: string;
   status: string;
   allow_change_override: boolean;
 
@@ -16,17 +16,19 @@ type LessonRow = {
   room_name: string;
 
   student_id: string | null;
-  student_name: string; // my: 실명 / other: "수업 있음"
+  student_name: string;
 
-  device_type: "controller" | "turntable" | "both" | null;
+  lesson_no?: number | null;
+  total_lessons?: number | null;
+  class_type?: string | null;
 };
 
 type AvailabilityRow = {
   teacher_id: string;
   teacher_name: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   weekday: number; // 0=Sun..6=Sat
-  start_time: string; // HH:mm:ss or HH:mm
+  start_time: string;
   end_time: string;
   device_type: "controller" | "turntable" | "both";
 };
@@ -36,16 +38,13 @@ type PracticeRow = {
   room_id: string | null;
   room_name: string;
 
-  date: string | null; // YYYY-MM-DD
-  start_time: string | null; // HH:mm
-  end_time: string | null; // HH:mm
-
-  start_ts: string | null;
-  end_ts: string | null;
+  date: string | null;
+  start_time: string | null;
+  end_time: string | null;
 
   student_id: string | null;
   student_name: string;
-  status: string; // APPROVED
+  status: string;
 };
 
 function pad2(n: number) {
@@ -69,16 +68,16 @@ function addDays(date: Date, days: number) {
   d.setDate(d.getDate() + days);
   return d;
 }
-function clampHHMM(t: string) {
+function clampHHMM(t: string | null | undefined) {
   if (!t) return "";
   return String(t).slice(0, 5);
 }
-function minutesOf(t: string) {
+function minutesOf(t: string | null | undefined) {
   const hhmm = clampHHMM(t);
   const [h, m] = hhmm.split(":").map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
 }
-const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"];
+const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 function normalizeRoom(roomName: string | null | undefined): "A" | "B" | "C" {
   const s = String(roomName ?? "").trim().toUpperCase();
@@ -93,22 +92,34 @@ function slotKey(date: string, time: string, roomNorm: "A" | "B" | "C") {
 }
 
 export default function TeacherScheduleBoardPage() {
-  // ===== layout tuning =====
-  const TIME_W = 105;
-  const AVAIL_W = 74; // 근무 도트 컬럼
-  const COL_W = 100;
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileDate, setMobileDate] = useState(() => ymd(new Date()));
+  const loadingRef = useRef(false);
 
-  const HEAD_H1 = 46;
-  const HEAD_H2 = 40;
-  const ROW_H = 38;
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 900);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const TIME_W = isMobile ? 62 : 96;
+  const COL_W = isMobile ? 72 : 108;
+
+  const HEAD_H1 = isMobile ? 42 : 48;
+  const HEAD_H2 = isMobile ? 34 : 40;
+  const ROW_H = isMobile ? 48 : 50;
 
   const STEP_MIN = 60;
   const DEFAULT_DURATION = 60;
 
   const rooms = ["A", "B", "C"] as const;
 
-  // 💙 내 레슨 블루
   const MY_BLUE = "#2563eb";
+  const OTHER_BLACK = "#111111";
+  const PRACTICE_ORANGE = "#f97316";
+  const WORK_BG = "#eff6ff";
+  const WORK_BORDER = "#bfdbfe";
 
   const [weekStart, setWeekStart] = useState(() => ymd(startOfWeek(new Date())));
   const [myLessons, setMyLessons] = useState<LessonRow[]>([]);
@@ -117,54 +128,78 @@ export default function TeacherScheduleBoardPage() {
   const [practice, setPractice] = useState<PracticeRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [selectedDow, setSelectedDow] = useState<number | null>(null);
-  const [hoverTime, setHoverTime] = useState<string>("");
-
   const week = useMemo(() => {
     const ws = parseYmd(weekStart);
     const days = Array.from({ length: 7 }).map((_, i) => addDays(ws, i));
     return { days, from: ymd(days[0]), to: ymd(days[6]) };
   }, [weekStart]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const qs = new URLSearchParams();
-    qs.set("from", week.from);
-    qs.set("to", week.to);
+  useEffect(() => {
+    const today = ymd(new Date());
+    const inThisWeek = week.days.some((d) => ymd(d) === today);
+    setMobileDate(inThisWeek ? today : ymd(week.days[0]));
+  }, [week]);
 
-    const res = await authFetch(`/api/teacher/schedule?${qs.toString()}`);
-    const data = await res.json().catch(() => ({}));
+  const load = useCallback(
+    async (force = false) => {
+      if (loadingRef.current && !force) return;
+      loadingRef.current = true;
+      setLoading(true);
 
-    if (!res.ok) {
-      alert(data.error ?? "스케줄 조회 실패");
-      setMyLessons([]);
-      setOtherLessons([]);
-      setAvailability([]);
-      setPractice([]);
-      setLoading(false);
-      return;
-    }
+      try {
+        const qs = new URLSearchParams();
+        qs.set("from", week.from);
+        qs.set("to", week.to);
 
-    setMyLessons((data.my_lessons ?? data.lessons ?? []) as LessonRow[]);
-    setOtherLessons((data.other_lessons ?? []) as LessonRow[]);
-    setAvailability((data.availability ?? []) as AvailabilityRow[]);
-    setPractice((data.practice_reservations ?? []) as PracticeRow[]);
-    setLoading(false);
-  }, [week.from, week.to]);
+        const res = await authFetch(`/api/teacher/schedule?${qs.toString()}`);
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          alert(data.error ?? "스케줄 조회 실패");
+          setMyLessons([]);
+          setOtherLessons([]);
+          setAvailability([]);
+          setPractice([]);
+          return;
+        }
+
+        setMyLessons((data.my_lessons ?? data.lessons ?? []) as LessonRow[]);
+        setOtherLessons((data.other_lessons ?? []) as LessonRow[]);
+        setAvailability((data.availability ?? []) as AvailabilityRow[]);
+        setPractice((data.practice_reservations ?? []) as PracticeRow[]);
+      } finally {
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    },
+    [week.from, week.to]
+  );
 
   useEffect(() => {
-    load();
+    load(true);
   }, [load]);
 
-  // 포커스/복귀 새로고침
   useEffect(() => {
-    const onFocus = () => load();
-    const onVisible = () => document.visibilityState === "visible" && load();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const onFocus = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => load(), 120);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => load(), 120);
+      }
+    };
+
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
+      if (timer) clearTimeout(timer);
     };
   }, [load]);
 
@@ -185,8 +220,17 @@ export default function TeacherScheduleBoardPage() {
     });
 
     availability.forEach((a) => {
-      const st = minutesOf(clampHHMM(a.start_time));
-      const ed = minutesOf(clampHHMM(a.end_time));
+      const st = minutesOf(a.start_time);
+      const ed = minutesOf(a.end_time);
+      if (Number.isFinite(st) && Number.isFinite(ed)) {
+        mins.push(st);
+        maxs.push(ed);
+      }
+    });
+
+    practice.forEach((p) => {
+      const st = minutesOf(p.start_time);
+      const ed = minutesOf(p.end_time);
       if (Number.isFinite(st) && Number.isFinite(ed)) {
         mins.push(st);
         maxs.push(ed);
@@ -207,7 +251,7 @@ export default function TeacherScheduleBoardPage() {
     }
 
     return { minM, maxM };
-  }, [myLessons, otherLessons, availability]);
+  }, [myLessons, otherLessons, availability, practice]);
 
   const slotTimes = useMemo(() => {
     const arr: string[] = [];
@@ -217,7 +261,6 @@ export default function TeacherScheduleBoardPage() {
     return arr;
   }, [timeRange]);
 
-  // columns (date x room)
   type Col = { dateStr: string; room: (typeof rooms)[number] };
   const cols = useMemo<Col[]>(() => {
     const out: Col[] = [];
@@ -228,7 +271,6 @@ export default function TeacherScheduleBoardPage() {
     return out;
   }, [week.days]);
 
-  // ---------- group by slot ----------
   const myLessonsBySlot = useMemo(() => {
     const m = new Map<string, LessonRow[]>();
     for (const l of myLessons) {
@@ -258,12 +300,11 @@ export default function TeacherScheduleBoardPage() {
 
     for (const p of practice) {
       if (!p.date || !p.start_time || !p.end_time) continue;
-      const roomNorm = normalizeRoom(p.room_name);
 
+      const roomNorm = normalizeRoom(p.room_name);
       const stM = minutesOf(p.start_time);
       const edM = minutesOf(p.end_time);
-      if (!Number.isFinite(stM) || !Number.isFinite(edM)) continue;
-      if (edM <= stM) continue;
+      if (!Number.isFinite(stM) || !Number.isFinite(edM) || edM <= stM) continue;
 
       for (let cur = stM; cur < edM; cur += STEP_MIN) {
         const t = `${pad2(Math.floor(cur / 60))}:${pad2(cur % 60)}`;
@@ -273,567 +314,814 @@ export default function TeacherScheduleBoardPage() {
         m.set(k, arr);
       }
     }
+
     return m;
   }, [practice]);
 
-  // ---------- availability dots (selected weekday only) ----------
-  type AvailTeacher = { id: string; name: string };
-  type AvailDetail = AvailTeacher & { ranges: { start: string; end: string }[] };
+  const availabilityByDate = useMemo(() => {
+    const map = new Map<string, { start: string; end: string }[]>();
 
-  const availByTimeForSelectedDow = useMemo(() => {
-    if (selectedDow === null)
-      return { byTime: new Map<string, AvailTeacher[]>(), detailByTeacherId: new Map<string, AvailDetail>() };
+    week.days.forEach((dayDate) => {
+      const dateStr = ymd(dayDate);
+      const dow = dayDate.getDay();
 
-    const rows = availability.filter((a) => Number(a.weekday) === selectedDow);
-
-    const detailByTeacherId = new Map<string, AvailDetail>();
-    rows.forEach((a) => {
-      const id = String(a.teacher_id);
-      const name = String(a.teacher_name ?? "알 수 없음");
-      const start = clampHHMM(a.start_time);
-      const end = clampHHMM(a.end_time);
-
-      const cur = detailByTeacherId.get(id) ?? { id, name, ranges: [] as { start: string; end: string }[] };
-      cur.name = name;
-      cur.ranges.push({ start, end });
-      detailByTeacherId.set(id, cur);
-    });
-
-    detailByTeacherId.forEach((d) => {
-      const ranges = d.ranges
+      const ranges = availability
+        .filter((a) => Number(a.weekday) === dow)
+        .map((a) => ({
+          start: clampHHMM(a.start_time),
+          end: clampHHMM(a.end_time),
+        }))
         .filter((r) => r.start && r.end)
         .sort((a, b) => minutesOf(a.start) - minutesOf(b.start));
+
       const merged: { start: string; end: string }[] = [];
       for (const r of ranges) {
         const last = merged[merged.length - 1];
-        if (!last) merged.push({ ...r });
-        else {
-          if (minutesOf(r.start) <= minutesOf(last.end)) {
-            const endMax = Math.max(minutesOf(last.end), minutesOf(r.end));
-            last.end = `${pad2(Math.floor(endMax / 60))}:${pad2(endMax % 60)}`;
-          } else {
-            merged.push({ ...r });
-          }
+        if (!last) {
+          merged.push({ ...r });
+        } else if (minutesOf(r.start) <= minutesOf(last.end)) {
+          const endMax = Math.max(minutesOf(last.end), minutesOf(r.end));
+          last.end = `${pad2(Math.floor(endMax / 60))}:${pad2(endMax % 60)}`;
+        } else {
+          merged.push({ ...r });
         }
       }
-      d.ranges = merged;
+
+      map.set(dateStr, merged);
     });
 
-    const map = new Map<string, Map<string, AvailTeacher>>();
-    rows.forEach((a) => {
-      const st = minutesOf(clampHHMM(a.start_time));
-      const ed = minutesOf(clampHHMM(a.end_time));
-      const id = String(a.teacher_id);
-      const name = String(a.teacher_name ?? "알 수 없음");
+    return map;
+  }, [availability, week.days]);
 
-      slotTimes.forEach((t) => {
-        const m = minutesOf(t);
-        if (m >= st && m < ed) {
-          const m2 = map.get(t) ?? new Map<string, AvailTeacher>();
-          m2.set(id, { id, name });
-          map.set(t, m2);
-        }
+  const isWorkingSlot = useCallback(
+    (dateStr: string, time: string) => {
+      const ranges = availabilityByDate.get(dateStr) ?? [];
+      const m = minutesOf(time);
+      return ranges.some((r) => m >= minutesOf(r.start) && m < minutesOf(r.end));
+    },
+    [availabilityByDate]
+  );
+
+  const getAvailabilityLabel = useCallback(
+    (dateStr: string) => {
+      const ranges = availabilityByDate.get(dateStr) ?? [];
+      if (ranges.length === 0) return "근무 없음";
+      return ranges.map((r) => `${r.start}-${r.end}`).join(" · ");
+    },
+    [availabilityByDate]
+  );
+
+  const mobileDay = useMemo(() => {
+    return week.days.find((d) => ymd(d) === mobileDate) ?? week.days[0];
+  }, [week.days, mobileDate]);
+
+  const mobileDateStr = ymd(mobileDay);
+
+  const mobileTimelineRows = useMemo(() => {
+    return slotTimes.map((t) => {
+      const myAtTime = myLessons.filter(
+        (l) => l.lesson_date === mobileDateStr && clampHHMM(l.lesson_time) === t
+      );
+      const otherAtTime = otherLessons.filter(
+        (l) => l.lesson_date === mobileDateStr && clampHHMM(l.lesson_time) === t
+      );
+      const practiceAtTime = practice.filter((p) => {
+        if (!p.date || !p.start_time || !p.end_time) return false;
+        const st = minutesOf(p.start_time);
+        const ed = minutesOf(p.end_time);
+        const cur = minutesOf(t);
+        return p.date === mobileDateStr && cur >= st && cur < ed;
       });
+      const working = isWorkingSlot(mobileDateStr, t);
+
+      return {
+        time: t,
+        myAtTime,
+        otherAtTime,
+        practiceAtTime,
+        working,
+      };
     });
-
-    const byTime = new Map<string, AvailTeacher[]>();
-    map.forEach((m2, t) => byTime.set(t, Array.from(m2.values())));
-
-    return { byTime, detailByTeacherId };
-  }, [availability, slotTimes, selectedDow]);
-
-  const renderAvailDots = (teachers: { id: string; name: string }[]) => {
-    if (!teachers || teachers.length === 0) return null;
-    // 강사 본인만 있으니 점 1개로 충분
-    return (
-      <span
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: 999,
-          background: MY_BLUE,
-          border: "1px solid rgba(0,0,0,0.18)",
-          display: "inline-block",
-          opacity: 0.28,
-        }}
-      />
-    );
-  };
+  }, [slotTimes, myLessons, otherLessons, practice, mobileDateStr, isWorkingSlot]);
 
   const goPrevWeek = () => {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() - 7);
-    setHoverTime("");
-    setSelectedDow(null);
     setWeekStart(ymd(startOfWeek(d)));
   };
   const goNextWeek = () => {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
-    setHoverTime("");
-    setSelectedDow(null);
     setWeekStart(ymd(startOfWeek(d)));
   };
   const goThisWeek = () => {
-    setHoverTime("");
-    setSelectedDow(null);
     setWeekStart(ymd(startOfWeek(new Date())));
   };
 
-  const gridColsTemplate = useMemo(() => `${TIME_W}px ${AVAIL_W}px repeat(${cols.length}, ${COL_W}px)`, [cols.length]);
+  const gridColsTemplate = useMemo(
+    () => `${TIME_W}px repeat(${cols.length}, ${COL_W}px)`,
+    [TIME_W, cols.length, COL_W]
+  );
 
   return (
-    <TeacherShell title="주간 레슨 현황">
-      <div style={{ maxWidth: 1600, padding: 16 }}>
-        {/* Controls */}
+    <TeacherShell title="주간 스케줄">
+      <div style={{ maxWidth: 1800, padding: isMobile ? 10 : 16 }}>
         <div
           style={{
             border: "1px solid #e5e5e5",
             borderRadius: 12,
             background: "#fff",
-            padding: 12,
+            padding: isMobile ? 10 : 12,
             marginBottom: 12,
             display: "flex",
-            gap: 10,
+            gap: 8,
             alignItems: "center",
             flexWrap: "wrap",
           }}
         >
-          <div style={{ fontWeight: 900 }}>강사 주간표</div>
+          <div style={{ fontWeight: 900, fontSize: isMobile ? 14 : 16 }}>강사 주간표</div>
 
-          <button onClick={goPrevWeek} style={btnGhost()}>
+          <button onClick={goPrevWeek} style={btnGhost(isMobile)}>
             ◀
           </button>
 
-          <div style={{ fontWeight: 900 }}>
+          <div style={{ fontWeight: 900, fontSize: isMobile ? 13 : 15 }}>
             {week.from} ~ {week.to}
           </div>
 
-          <button onClick={goNextWeek} style={btnGhost()}>
+          <button onClick={goNextWeek} style={btnGhost(isMobile)}>
             ▶
           </button>
 
-          <button onClick={goThisWeek} style={btnGhost()}>
+          <button onClick={goThisWeek} style={btnGhost(isMobile)}>
             이번주
           </button>
 
-          <button onClick={load} style={btnPrimary()}>
+          <button onClick={() => load(true)} style={btnPrimary(isMobile)}>
             새로고침
           </button>
 
-          <div style={{ marginLeft: "auto", color: "#666", fontSize: 13, fontWeight: 900 }}>
-            {loading ? "불러오는 중..." : `내 레슨 ${myLessons.length} · 연습실 ${practice.length}`}
+          <div
+            style={{
+              marginLeft: "auto",
+              color: "#666",
+              fontSize: isMobile ? 12 : 13,
+              fontWeight: 900,
+            }}
+          >
+            {loading ? "불러오는 중..." : `내 수업 ${myLessons.length} · 연습실 ${practice.length}`}
           </div>
 
-          <div style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
-              요일 선택하면 근무 도트가 그 요일 기준으로 표시돼요.
-            </div>
-            {selectedDow !== null ? (
-              <button
-                onClick={() => {
-                  setSelectedDow(null);
-                  setHoverTime("");
-                }}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  cursor: "pointer",
-                  fontWeight: 900,
-                  fontSize: 12,
-                  color: "#111",
-                }}
-              >
-                요일 선택 해제
-              </button>
-            ) : null}
+          <div
+            style={{
+              width: "100%",
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              marginTop: 4,
+            }}
+          >
+            <LegendChip color={MY_BLUE} label="내 수업" />
+            <LegendChip color={OTHER_BLACK} label="다른 수업" />
+            <LegendChip color={PRACTICE_ORANGE} label="연습실" />
+            <LegendChip color={WORK_BG} label="내 근무 시간" border={WORK_BORDER} textColor="#1d4ed8" />
           </div>
         </div>
 
-        {/* Sheet */}
-        <div
-          style={{
-            border: "1px solid #e5e5e5",
-            borderRadius: 12,
-            background: "#fff",
-            overflow: "auto",
-            height: "calc(100vh - 240px)",
-          }}
-        >
-          {/* Sticky headers */}
-          <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#fff" }}>
-            {/* Header row 1: Day */}
-            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #eee" }}>
-              <div
-                style={{
-                  position: "sticky",
-                  left: 0,
-                  zIndex: 60,
-                  gridColumn: "span 2",
-                  height: HEAD_H1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 900,
-                  color: "#666",
-                  background: "#fff",
-                  borderRight: "1px solid #eee",
-                }}
-              >
-                시간/근무
-              </div>
-
+        {isMobile ? (
+          <>
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                overflowX: "auto",
+                marginBottom: 10,
+                paddingBottom: 2,
+                WebkitOverflowScrolling: "touch",
+              }}
+            >
               {week.days.map((d) => {
                 const dateStr = ymd(d);
-                const day = d.getDay();
-                const labelDay = `${DOW_KR[day]}(${d.getDate()})`;
-                const isToday = dateStr === ymd(new Date());
-                const isSelected = selectedDow === day;
+                const selected = dateStr === mobileDate;
+                const today = dateStr === ymd(new Date());
 
                 return (
                   <button
-                    type="button"
                     key={dateStr}
-                    onClick={() => {
-                      setHoverTime("");
-                      setSelectedDow((prev) => (prev === day ? null : day));
-                    }}
+                    onClick={() => setMobileDate(dateStr)}
                     style={{
-                      gridColumn: `span ${rooms.length}`,
-                      height: HEAD_H1,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      minWidth: 58,
+                      padding: "9px 10px",
+                      borderRadius: 12,
+                      border: selected ? "1px solid #111" : "1px solid #ddd",
+                      background: selected ? "#111" : "#fff",
+                      color: selected ? "#fff" : "#111",
                       fontWeight: 900,
-                      background: isSelected ? "#111" : isToday ? "#111" : "#fafafa",
-                      color: isSelected ? "#fff" : isToday ? "#fff" : "#111",
-                      borderRight: "1px solid #eee",
                       cursor: "pointer",
+                      flexShrink: 0,
                     }}
-                    title="클릭하면 해당 요일 근무 도트를 표시해요"
                   >
-                    {labelDay}
+                    <div style={{ fontSize: 12 }}>{DOW_KR[d.getDay()]}</div>
+                    <div style={{ fontSize: 11, opacity: selected ? 0.95 : today ? 1 : 0.72 }}>
+                      {d.getDate()}일
+                    </div>
                   </button>
                 );
               })}
             </div>
 
-            {/* Header row 2: Rooms */}
-            <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #eee" }}>
-              <div style={{ position: "sticky", left: 0, zIndex: 60, height: HEAD_H2, background: "#fff", borderRight: "1px solid #eee" }} />
+            <div
+              style={{
+                border: "1px solid #e5e5e5",
+                borderRadius: 12,
+                background: "#fff",
+                overflow: "hidden",
+              }}
+            >
               <div
                 style={{
-                  position: "sticky",
-                  left: TIME_W,
-                  zIndex: 60,
-                  height: HEAD_H2,
-                  background: "#fff",
-                  borderRight: "1px solid #eee",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 1000,
-                  fontSize: 12,
-                  color: selectedDow === null ? "#aaa" : "#666",
+                  padding: "12px 14px",
+                  borderBottom: "1px solid #eee",
+                  background: "#fafafa",
                 }}
               >
-                근무
+                <div style={{ fontWeight: 900, color: "#111", fontSize: 14 }}>
+                  {mobileDateStr} · {DOW_KR[mobileDay.getDay()]}
+                </div>
+                <div style={{ marginTop: 4, color: "#666", fontSize: 12, fontWeight: 800 }}>
+                  근무시간: {getAvailabilityLabel(mobileDateStr)}
+                </div>
               </div>
 
-              {cols.map((c, idx) => (
+              {mobileTimelineRows.map((row) => (
                 <div
-                  key={`${c.dateStr}|${c.room}|${idx}`}
+                  key={row.time}
                   style={{
-                    height: HEAD_H2,
                     display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontWeight: 1000,
-                    background: "#fff",
-                    borderRight: "1px solid #f0f0f0",
-                    color: "#111",
-                    fontSize: 13,
+                    alignItems: "stretch",
+                    borderBottom: "1px solid #f1f1f1",
+                    background: row.working ? "#f8fbff" : "#fff",
                   }}
                 >
-                  {c.room}
+                  <div
+                    style={{
+                      width: 62,
+                      flexShrink: 0,
+                      padding: "12px 8px",
+                      fontWeight: 900,
+                      fontSize: 12,
+                      color: "#555",
+                      borderRight: "1px solid #f1f1f1",
+                      textAlign: "center",
+                    }}
+                  >
+                    {row.time}
+                  </div>
+
+                  <div style={{ flex: 1, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {row.myAtTime.map((l) => (
+                      <div
+                        key={`m-${l.id}-${row.time}`}
+                        style={{
+                          background: MY_BLUE,
+                          color: "#fff",
+                          borderRadius: 10,
+                          padding: "9px 10px",
+                          boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+                        }}
+                        title={`${l.student_name}\n${clampHHMM(l.lesson_time)} · ${l.room_name}\n${
+                          l.lesson_no && l.total_lessons ? `${l.lesson_no}/${l.total_lessons}` : ""
+                        }`}
+                      >
+                        <div style={{ fontWeight: 900, fontSize: 12, lineHeight: 1.25 }}>
+                          {l.student_name || "이름 없음"}
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 11, opacity: 0.95, fontWeight: 800 }}>
+                          {clampHHMM(l.lesson_time)} · {l.room_name || "-"}
+                          {l.allow_change_override ? " · 예외" : ""}
+                        </div>
+                        <div style={{ marginTop: 2, fontSize: 11, opacity: 0.95, fontWeight: 800 }}>
+                          {l.lesson_no && l.total_lessons
+                            ? `${l.lesson_no}회차 / 총 ${l.total_lessons}회`
+                            : l.lesson_no
+                            ? `${l.lesson_no}회차`
+                            : ""}
+                        </div>
+                      </div>
+                    ))}
+
+                    {row.otherAtTime.length > 0 && (
+                      <div
+                        style={{
+                          background: OTHER_BLACK,
+                          color: "#fff",
+                          borderRadius: 10,
+                          padding: "9px 10px",
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, fontSize: 12 }}>다른 수업</div>
+                      </div>
+                    )}
+
+                    {row.practiceAtTime.map((p, idx) => (
+                      <div
+                        key={`p-${p.id}-${row.time}-${idx}`}
+                        style={{
+                          background: PRACTICE_ORANGE,
+                          color: "#fff",
+                          borderRadius: 10,
+                          padding: "9px 10px",
+                        }}
+                        title={`${p.student_name}\n${p.start_time}-${p.end_time}\n${p.room_name}`}
+                      >
+                        <div style={{ fontWeight: 900, fontSize: 12 }}>연습실 예약</div>
+                        <div style={{ marginTop: 4, fontSize: 11, opacity: 0.96, fontWeight: 800 }}>
+                          {p.student_name} · {p.room_name || "-"}
+                        </div>
+                      </div>
+                    ))}
+
+                    {row.myAtTime.length === 0 &&
+                      row.otherAtTime.length === 0 &&
+                      row.practiceAtTime.length === 0 &&
+                      row.working && (
+                        <div
+                          style={{
+                            padding: "8px 2px",
+                            color: "#2563eb",
+                            fontSize: 11,
+                            fontWeight: 900,
+                          }}
+                        >
+                          근무 가능
+                        </div>
+                      )}
+
+                    {row.myAtTime.length === 0 &&
+                      row.otherAtTime.length === 0 &&
+                      row.practiceAtTime.length === 0 &&
+                      !row.working && <div style={{ height: 6 }} />}
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
 
-          {/* Body */}
-          <div
-            style={{
-              position: "relative",
-              display: "grid",
-              gridTemplateColumns: gridColsTemplate,
-              gridTemplateRows: `repeat(${slotTimes.length}, ${ROW_H}px)`,
-            }}
-          >
-            {/* Time column */}
-            {slotTimes.map((t, rIdx) => (
-              <div
-                key={`time-${t}`}
-                style={{
-                  position: "sticky",
-                  left: 0,
-                  zIndex: 40,
-                  gridColumn: 1,
-                  gridRow: rIdx + 1,
-                  background: "#fff",
-                  borderRight: "1px solid #eee",
-                  borderBottom: "1px solid #f3f3f3",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 900,
-                  fontSize: 12,
-                  color: "#555",
-                }}
-              >
-                {t}
-              </div>
-            ))}
-
-            {/* Availability dots column */}
-            {slotTimes.map((t, rIdx) => {
-              const teachers = selectedDow === null ? [] : availByTimeForSelectedDow.byTime.get(t) ?? [];
-              const showTooltip = selectedDow !== null && hoverTime === t && teachers.length > 0;
-
-              return (
-                <div
-                  key={`avail-${t}`}
-                  style={{
-                    position: "sticky",
-                    left: TIME_W,
-                    zIndex: 45,
-                    gridColumn: 2,
-                    gridRow: rIdx + 1,
-                    background: "#fff",
-                    borderRight: "1px solid #eee",
-                    borderBottom: "1px solid #f3f3f3",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: selectedDow !== null && teachers.length > 0 ? "help" : "default",
-                    opacity: selectedDow === null ? 0.35 : 1,
-                  }}
-                  onMouseEnter={() => {
-                    if (selectedDow === null) return;
-                    setHoverTime(t);
-                  }}
-                  onMouseLeave={() => setHoverTime("")}
-                >
-                  {selectedDow === null ? null : renderAvailDots(teachers)}
-
-                  {showTooltip && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: "100%",
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        marginLeft: 10,
-                        width: 240,
-                        border: "1px solid #e5e5e5",
-                        borderRadius: 12,
-                        background: "#fff",
-                        boxShadow: "0 10px 26px rgba(0,0,0,0.12)",
-                        padding: 10,
-                        zIndex: 999,
-                      }}
-                    >
-                      <div style={{ fontWeight: 1100, fontSize: 12, color: "#111" }}>
-                        {DOW_KR[selectedDow ?? 0]} · {t} 근무 가능
-                      </div>
-                      <div style={{ marginTop: 6, fontSize: 11, color: "#666", fontWeight: 900 }}>
-                        {availability
-                          .filter((a) => a.weekday === selectedDow)
-                          .map((a) => `${clampHHMM(a.start_time)}–${clampHHMM(a.end_time)}`)
-                          .join(" · ") || "근무시간 정보 없음"}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Background cells */}
-            {cols.map((col, cIdx) =>
-              slotTimes.map((__, rIdx) => {
-                const date = parseYmd(col.dateStr);
-                const day = date.getDay();
-                const isSelectedDay = selectedDow !== null && day === selectedDow;
-
-                return (
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                color: "#666",
+                fontWeight: 900,
+                lineHeight: 1.5,
+              }}
+            >
+              * 모바일은 요일 탭으로 하루씩 확인할 수 있어요.
+            </div>
+          </>
+        ) : (
+          <>
+            <div
+              style={{
+                border: "1px solid #e5e5e5",
+                borderRadius: 12,
+                background: "#fff",
+                overflow: "auto",
+                height: "calc(100vh - 240px)",
+              }}
+            >
+              <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#fff" }}>
+                <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #eee" }}>
                   <div
-                    key={`bg-${cIdx}-${rIdx}`}
                     style={{
-                      gridColumn: cIdx + 3,
-                      gridRow: rIdx + 1,
-                      borderBottom: "1px solid #f3f3f3",
-                      borderRight: "1px solid #f3f3f3",
-                      background: isSelectedDay ? "#f7f7f7" : rIdx % 2 === 0 ? "#fff" : "#fcfcfc",
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 60,
+                      height: HEAD_H1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 900,
+                      color: "#666",
+                      background: "#fff",
+                      borderRight: "1px solid #eee",
+                      fontSize: 14,
+                    }}
+                  >
+                    시간
+                  </div>
+
+                  {week.days.map((d) => {
+                    const dateStr = ymd(d);
+                    const day = d.getDay();
+                    const isToday = dateStr === ymd(new Date());
+
+                    return (
+                      <div
+                        key={dateStr}
+                        style={{
+                          gridColumn: `span ${rooms.length}`,
+                          height: HEAD_H1,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 900,
+                          background: isToday ? "#111" : "#fafafa",
+                          color: isToday ? "#fff" : "#111",
+                          borderRight: "1px solid #eee",
+                          padding: "4px 6px",
+                          lineHeight: 1.15,
+                        }}
+                        title={`근무시간: ${getAvailabilityLabel(dateStr)}`}
+                      >
+                        <div style={{ fontSize: 14 }}>
+                          {DOW_KR[day]}({d.getDate()})
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 2,
+                            fontSize: 10,
+                            fontWeight: 800,
+                            opacity: isToday ? 0.92 : 0.72,
+                            maxWidth: "100%",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {getAvailabilityLabel(dateStr)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: gridColsTemplate, borderBottom: "1px solid #eee" }}>
+                  <div
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 60,
+                      height: HEAD_H2,
+                      background: "#fff",
+                      borderRight: "1px solid #eee",
                     }}
                   />
-                );
-              })
-            )}
 
-            {/* 1) Other lessons (회색) - zIndex 낮게 */}
-            {Array.from(otherLessonsBySlot.entries()).flatMap(([key, list]) => {
-              const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
-              const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
-              if (colIndex === -1) return [];
-
-              const stMin = minutesOf(hhmm);
-              const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
-              const rowSpan = 1;
-
-              // slot에 여러개 있어도 "수업 있음" 하나면 충분
-              const p = list[0];
-              return [
-                <div
-                  key={`other-${p.id}-${key}`}
-                  style={{
-                    gridColumn: colIndex + 3,
-                    gridRow: `${rowStart} / span ${rowSpan}`,
-                    margin: 4,
-                    borderRadius: 10,
-                    border: "1px solid #d1d5db",
-                    background: "#e5e7eb",
-                    color: "#666",
-                    padding: "6px 8px",
-                    fontWeight: 1000,
-                    fontSize: 12,
-                    display: "flex",
-                    alignItems: "center",
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    textOverflow: "ellipsis",
-                    zIndex: 3,
-                    opacity: 0.85,
-                    cursor: "default",
-                  }}
-                  title={`${dateStr} ${hhmm} · ${roomNorm}홀\n다른 강사 수업`}
-                >
-                  수업 있음
-                </div>,
-              ];
-            })}
-
-            {/* 2) Practice blocks (오렌지) - 중간 레이어 */}
-            {Array.from(practiceBySlot.entries()).flatMap(([key, list]) => {
-              const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
-
-              const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
-              if (colIndex === -1) return [];
-
-              const stMin = minutesOf(hhmm);
-              const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
-              const rowSpan = 1;
-
-              return list.map((p) => (
-                <div
-                  key={`prac-${p.id}-${key}`}
-                  style={{
-                    gridColumn: colIndex + 3,
-                    gridRow: `${rowStart} / span ${rowSpan}`,
-                    margin: 4,
-                    borderRadius: 10,
-                    border: "2px solid rgba(0,0,0,0.12)",
-                    background: "#f97316",
-                    color: "#fff",
-                    padding: "6px 8px",
-                    fontWeight: 900,
-                    fontSize: 12,
-                    display: "flex",
-                    alignItems: "center",
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    textOverflow: "ellipsis",
-                    zIndex: 5,
-                    opacity: 0.92,
-                  }}
-                  title={`${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${roomNorm}홀\n${p.student_name} (연습실)`}
-                >
-                  {p.student_name}
+                  {cols.map((c, idx) => (
+                    <div
+                      key={`${c.dateStr}|${c.room}|${idx}`}
+                      style={{
+                        height: HEAD_H2,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 1000,
+                        background: "#fff",
+                        borderRight: "1px solid #f0f0f0",
+                        color: "#111",
+                        fontSize: 13,
+                      }}
+                    >
+                      {c.room}
+                    </div>
+                  ))}
                 </div>
-              ));
-            })}
+              </div>
 
-            {/* 3) My lessons (블루) - 최상단 */}
-            {Array.from(myLessonsBySlot.entries()).flatMap(([key, list]) => {
-              const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
+              <div
+                style={{
+                  position: "relative",
+                  display: "grid",
+                  gridTemplateColumns: gridColsTemplate,
+                  gridTemplateRows: `repeat(${slotTimes.length}, ${ROW_H}px)`,
+                  minWidth: TIME_W + cols.length * COL_W,
+                }}
+              >
+                {slotTimes.map((t, rIdx) => (
+                  <div
+                    key={`time-${t}`}
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 40,
+                      gridColumn: 1,
+                      gridRow: rIdx + 1,
+                      background: "#fff",
+                      borderRight: "1px solid #eee",
+                      borderBottom: "1px solid #f3f3f3",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 900,
+                      fontSize: 12,
+                      color: "#555",
+                    }}
+                  >
+                    {t}
+                  </div>
+                ))}
 
-              const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
-              if (colIndex === -1) return [];
+                {cols.map((col, cIdx) =>
+                  slotTimes.map((t, rIdx) => {
+                    const working = isWorkingSlot(col.dateStr, t);
 
-              const stMin = minutesOf(hhmm);
-              const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
-              const rowSpan = 1;
+                    return (
+                      <div
+                        key={`bg-${cIdx}-${rIdx}`}
+                        style={{
+                          gridColumn: cIdx + 2,
+                          gridRow: rIdx + 1,
+                          borderBottom: "1px solid #f3f3f3",
+                          borderRight: "1px solid #f3f3f3",
+                          background: working ? WORK_BG : rIdx % 2 === 0 ? "#fff" : "#fcfcfc",
+                          boxShadow: working ? `inset 0 0 0 1px ${WORK_BORDER}` : "none",
+                        }}
+                        title={working ? "근무 가능 시간" : undefined}
+                      />
+                    );
+                  })
+                )}
 
-              const l = list[0];
-              return [
-                <div
-                  key={`my-${l.id}-${key}`}
-                  style={{
-                    gridColumn: colIndex + 3,
-                    gridRow: `${rowStart} / span ${rowSpan}`,
-                    margin: 4,
-                    borderRadius: 10,
-                    border: "2px solid rgba(0,0,0,0.12)",
-                    background: MY_BLUE,
-                    color: "#fff",
-                    padding: "6px 8px",
-                    fontWeight: 1000,
-                    fontSize: 12,
-                    display: "flex",
-                    alignItems: "center",
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    textOverflow: "ellipsis",
-                    zIndex: 10,
-                    boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
-                  }}
-                  title={`${l.lesson_date} ${clampHHMM(l.lesson_time)} / ${roomNorm}홀\n${l.student_name}`}
-                >
-                  {l.student_name}
-                  {l.allow_change_override ? <span style={{ marginLeft: 6, opacity: 0.95 }}>(예외)</span> : null}
-                </div>,
-              ];
-            })}
-          </div>
-        </div>
+                {Array.from(otherLessonsBySlot.entries()).flatMap(([key, list]) => {
+                  const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
+                  const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
+                  if (colIndex === -1) return [];
 
-        <div style={{ marginTop: 10, fontSize: 12, color: "#666", fontWeight: 900 }}>
-          * 내 레슨(블루) · 다른 강사 수업(회색) · 연습실 확정(오렌지)
-        </div>
+                  const stMin = minutesOf(hhmm);
+                  const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
+                  const p = list[0];
+
+                  return [
+                    <div
+                      key={`other-${p.id}-${key}`}
+                      style={{
+                        gridColumn: colIndex + 2,
+                        gridRow: `${rowStart} / span 1`,
+                        margin: 3,
+                        borderRadius: 9,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: OTHER_BLACK,
+                        color: "#fff",
+                        padding: "4px 6px",
+                        fontWeight: 900,
+                        fontSize: 11,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexDirection: "column",
+                        overflow: "hidden",
+                        zIndex: 3,
+                        opacity: 0.95,
+                        lineHeight: 1.08,
+                      }}
+                      title={`${dateStr} ${hhmm} · ${p.room_name || roomNorm}홀\n다른 강사 수업`}
+                    >
+                      <div
+                        style={{
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          width: "100%",
+                          textAlign: "center",
+                        }}
+                      >
+                        수업 있음
+                      </div>
+                    </div>,
+                  ];
+                })}
+
+                {Array.from(practiceBySlot.entries()).flatMap(([key, list]) => {
+                  const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
+                  const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
+                  if (colIndex === -1) return [];
+
+                  const stMin = minutesOf(hhmm);
+                  const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
+
+                  return list.map((p, idx) => (
+                    <div
+                      key={`prac-${p.id}-${key}-${idx}`}
+                      style={{
+                        gridColumn: colIndex + 2,
+                        gridRow: `${rowStart} / span 1`,
+                        margin: 3,
+                        borderRadius: 9,
+                        border: "2px solid rgba(0,0,0,0.1)",
+                        background: PRACTICE_ORANGE,
+                        color: "#fff",
+                        padding: "4px 6px",
+                        fontWeight: 900,
+                        fontSize: 11,
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        zIndex: 5,
+                        opacity: 0.96,
+                        lineHeight: 1.08,
+                      }}
+                      title={`${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${p.room_name || roomNorm}\n${p.student_name} (연습실)`}
+                    >
+                      <div
+                        style={{
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        연습실 예약
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 1,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          opacity: 0.95,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {p.student_name}
+                      </div>
+                    </div>
+                  ));
+                })}
+
+                {Array.from(myLessonsBySlot.entries()).flatMap(([key, list]) => {
+                  const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
+                  const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
+                  if (colIndex === -1) return [];
+
+                  const stMin = minutesOf(hhmm);
+                  const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
+                  const l = list[0];
+
+                  return [
+                    <div
+                      key={`my-${l.id}-${key}`}
+                      style={{
+                        gridColumn: colIndex + 2,
+                        gridRow: `${rowStart} / span 1`,
+                        margin: 3,
+                        borderRadius: 9,
+                        border: "2px solid rgba(0,0,0,0.12)",
+                        background: MY_BLUE,
+                        color: "#fff",
+                        padding: "4px 6px",
+                        fontWeight: 1000,
+                        fontSize: 11,
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        zIndex: 10,
+                        boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
+                        lineHeight: 1.08,
+                      }}
+                      title={`${l.lesson_date} ${clampHHMM(l.lesson_time)} / ${l.room_name || roomNorm}
+학생: ${l.student_name || "이름 없음"}
+${
+  l.lesson_no && l.total_lessons
+    ? `회차: ${l.lesson_no}/${l.total_lessons}`
+    : l.lesson_no
+    ? `회차: ${l.lesson_no}`
+    : ""
+}`}
+                    >
+                      <div
+                        style={{
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {l.student_name || "이름 없음"}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 1,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          opacity: 0.95,
+                          lineHeight: 1.1,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {clampHHMM(l.lesson_time)} · {l.room_name || "-"}
+                          {l.allow_change_override ? " · 예외" : ""}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 1,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {l.lesson_no && l.total_lessons
+                            ? `${l.lesson_no}회차 / 총 ${l.total_lessons}회`
+                            : l.lesson_no
+                            ? `${l.lesson_no}회차`
+                            : ""}
+                        </div>
+                      </div>
+                    </div>,
+                  ];
+                })}
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 12,
+                color: "#666",
+                fontWeight: 900,
+                lineHeight: 1.5,
+              }}
+            >
+              * 파랑=내 수업 · 검정=다른 수업 · 주황=연습실 · 연한 파랑 배경=내 근무 시간
+            </div>
+          </>
+        )}
       </div>
     </TeacherShell>
   );
 }
 
-function btnGhost(): React.CSSProperties {
+function LegendChip({
+  color,
+  label,
+  border,
+  textColor,
+}: {
+  color: string;
+  label: string;
+  border?: string;
+  textColor?: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 10px",
+        borderRadius: 999,
+        border: `1px solid ${border ?? "rgba(0,0,0,0.08)"}`,
+        background: "#fff",
+        fontSize: 12,
+        fontWeight: 900,
+        color: "#444",
+      }}
+    >
+      <span
+        style={{
+          width: 12,
+          height: 12,
+          borderRadius: 999,
+          background: color,
+          border: `1px solid ${border ?? "rgba(0,0,0,0.08)"}`,
+          display: "inline-block",
+        }}
+      />
+      <span style={{ color: textColor ?? "#444" }}>{label}</span>
+    </div>
+  );
+}
+
+function btnGhost(isMobile?: boolean): React.CSSProperties {
   return {
-    padding: "8px 10px",
+    padding: isMobile ? "7px 9px" : "8px 10px",
     borderRadius: 10,
     border: "1px solid #ddd",
     background: "#fff",
     cursor: "pointer",
     fontWeight: 900,
+    fontSize: isMobile ? 12 : 13,
   };
 }
-function btnPrimary(): React.CSSProperties {
+function btnPrimary(isMobile?: boolean): React.CSSProperties {
   return {
-    padding: "8px 12px",
+    padding: isMobile ? "7px 10px" : "8px 12px",
     borderRadius: 10,
     border: "1px solid #111",
     background: "#111",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 900,
+    fontSize: isMobile ? 12 : 13,
   };
 }

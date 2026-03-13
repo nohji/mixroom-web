@@ -3,7 +3,20 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { authFetch } from "@/lib/authFetch";
+
+function getPasswordErrorMessage(message?: string) {
+  const msg = (message ?? "").toLowerCase();
+
+  if (msg.includes("same password")) {
+    return "기존 비밀번호와 다른 비밀번호로 설정해 주세요.";
+  }
+
+  if (msg.includes("password")) {
+    return "비밀번호 변경에 실패했습니다. 조건을 다시 확인해 주세요.";
+  }
+
+  return "비밀번호 변경에 실패했습니다.";
+}
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -13,7 +26,6 @@ export default function ChangePasswordPage() {
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    // 로그인 안 되어 있으면 로그인으로
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (!data.user) router.replace("/login");
@@ -27,31 +39,50 @@ export default function ChangePasswordPage() {
       setMsg("비밀번호는 최소 6자리 이상으로 해줘!");
       return;
     }
+
     if (pw1 !== pw2) {
       setMsg("비밀번호 확인이 일치하지 않아!");
       return;
     }
 
     setLoading(true);
+
     try {
       // 1) Supabase Auth 비밀번호 변경
       const { error } = await supabase.auth.updateUser({ password: pw1 });
+
       if (error) {
-        setMsg(error.message ?? "비밀번호 변경 실패");
+        setMsg(getPasswordErrorMessage(error.message));
         return;
       }
 
-      // 2) profiles.must_change_password = false 처리 (API로)
-      const res = await authFetch("/api/me/mark-password-changed", {
+      // 2) 변경 후 현재 세션 토큰 다시 읽기
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        setMsg("로그인 정보가 만료되었습니다. 다시 로그인해 주세요.");
+        return;
+      }
+
+      // 3) profiles.must_change_password = false 처리
+      const res = await fetch("/api/me/mark-password-changed", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
       });
+
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
         setMsg(data.error ?? "프로필 업데이트 실패");
         return;
       }
 
-      // 3) 다시 /app으로 보내서 역할 분기
+      // 4) /app으로 이동
       router.replace("/app");
       router.refresh();
     } finally {
@@ -60,8 +91,6 @@ export default function ChangePasswordPage() {
   };
 
   const onSkip = async () => {
-    // ✅ must_change_password는 그대로 둠 (다음 로그인 때 다시 변경 화면으로 유도)
-    // 그냥 역할 라우팅(/app)으로 보내기만 한다.
     sessionStorage.setItem("skip_pw_change_once", "1");
     router.replace("/app");
     router.refresh();
@@ -91,6 +120,9 @@ export default function ChangePasswordPage() {
               color: "#111",
               background: "#fff",
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !loading) onSubmit();
+            }}
           />
         </label>
 
@@ -107,6 +139,9 @@ export default function ChangePasswordPage() {
               border: "1px solid #ddd",
               color: "#111",
               background: "#fff",
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !loading) onSubmit();
             }}
           />
         </label>
