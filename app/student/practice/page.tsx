@@ -122,11 +122,20 @@ function statusBadge(status: string) {
 
 type VoucherSummary = {
   today?: string;
+
+  // 기존 필드
   remaining_hours: number;
   usable_until: string | null;
   usable_from?: string | null;
   has_voucher?: boolean;
   active_voucher_ids?: string[];
+
+  // 추가 필드
+  base_remaining_hours?: number;
+  extra_free_hours?: number;
+  paid_hours?: number;
+  total_remaining_hours?: number;
+  extra_usable?: boolean;
 };
 
 function inRangeDate(d: string, from?: string | null, to?: string | null) {
@@ -206,6 +215,22 @@ export default function PracticeStudentPage() {
   const voucherFrom = useMemo(() => voucherSummary?.usable_from ?? null, [voucherSummary]);
   const voucherTo = useMemo(() => voucherSummary?.usable_until ?? null, [voucherSummary]);
 
+  const totalRemainingHours = useMemo(() => {
+    return Number(voucherSummary?.total_remaining_hours ?? voucherSummary?.remaining_hours ?? 0);
+  }, [voucherSummary]);
+
+  const baseRemainingHours = useMemo(() => {
+    return Number(voucherSummary?.base_remaining_hours ?? voucherSummary?.remaining_hours ?? 0);
+  }, [voucherSummary]);
+
+  const extraFreeHours = useMemo(() => {
+    return Number(voucherSummary?.extra_free_hours ?? 0);
+  }, [voucherSummary]);
+
+  const paidHours = useMemo(() => {
+    return Number(voucherSummary?.paid_hours ?? 0);
+  }, [voucherSummary]);
+
   // 날짜 바뀌어도 렌더 시 자동 반영
   const practicePolicyRange = getPracticeReservePolicyRange();
   const reserveMinYmd = practicePolicyRange.minYmd;
@@ -226,8 +251,8 @@ export default function PracticeStudentPage() {
   }, [voucherSummary]);
 
   const isVoucherEmpty = useMemo(() => {
-    return hasVoucher && (voucherSummary?.remaining_hours ?? 0) <= 0;
-  }, [hasVoucher, voucherSummary]);
+    return totalRemainingHours <= 0;
+  }, [totalRemainingHours]);
 
   useEffect(() => {
     const sd = parseYmd(selectedDate);
@@ -534,7 +559,9 @@ export default function PracticeStudentPage() {
 
       {/* 예약 내역 상단 */}
       <div ref={reservationListRef} style={{ marginTop: 12 }}>
-        <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 10 }}>📌 현재 수강권 예약 내역</div>
+        <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 10 }}>
+          📌 현재 수강권 예약 내역
+        </div>
 
         <div
           style={{
@@ -722,7 +749,24 @@ export default function PracticeStudentPage() {
         <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
             <div style={{ color: "#111", fontWeight: 1000 }}>남은 시간</div>
-            <div style={{ color: "#111", fontWeight: 1100 }}>{voucherSummary?.remaining_hours ?? 0}시간</div>
+            <div style={{ color: "#111", fontWeight: 1100 }}>{totalRemainingHours}시간</div>
+          </div>
+
+          <div style={{ display: "grid", gap: 6, padding: "10px 12px", borderRadius: 12, background: "#f8fafc" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ color: "#666", fontWeight: 1000 }}>기본 무료</div>
+              <div style={{ color: "#111", fontWeight: 1100 }}>{baseRemainingHours}시간</div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ color: "#666", fontWeight: 1000 }}>추가 무료</div>
+              <div style={{ color: "#111", fontWeight: 1100 }}>{extraFreeHours}시간</div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ color: "#666", fontWeight: 1000 }}>유료</div>
+              <div style={{ color: "#111", fontWeight: 1100 }}>{paidHours}시간</div>
+            </div>
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>

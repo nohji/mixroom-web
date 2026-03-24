@@ -6,7 +6,7 @@ type Body = {
   room_id?: string;
   date?: string; // YYYY-MM-DD
   times?: string[]; // ["13:00","14:00"]
-  device_type?: string; // optional (현재 테이블 컬럼 없어도 OK)
+  device_type?: string;
 };
 
 function json(data: any, status = 200) {
@@ -20,7 +20,6 @@ function isValidYmd(s: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ""));
 }
 
-// ✅ KST 기준 today
 function todayYmdKST() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -45,15 +44,13 @@ export async function POST(req: Request) {
   const times = Array.isArray(body.times) ? body.times.map((x) => String(x).trim()) : [];
   const device_type = String(body.device_type ?? "controller").trim();
 
-  // ===== 기본 유효성 =====
   if (!room_id) return json({ error: "ROOM_REQUIRED" }, 400);
   if (!date || !isValidYmd(date)) return json({ error: "DATE_REQUIRED" }, 400);
   if (times.length === 0) return json({ error: "TIME_REQUIRED" }, 400);
 
-  // ===== 예약 정책 (KST 기준) =====
   const today = todayYmdKST();
-  const minDate = addDaysYmd(today, 2);   // 오늘 +2일
-  const maxDate = addDaysYmd(today, 30);  // 오늘 +30일
+  const minDate = addDaysYmd(today, 2);
+  const maxDate = addDaysYmd(today, 30);
 
   if (date < minDate) {
     return json({ error: "TOO_SOON" }, 400);
@@ -63,10 +60,8 @@ export async function POST(req: Request) {
     return json({ error: "TOO_FAR" }, 400);
   }
 
-  // ===== 시간 개수 제한 =====
   if (times.length > 2) return json({ error: "MAX_2_HOURS" }, 400);
 
-  // ===== 시간 포맷 & 중복 체크 =====
   const uniqueTimes = Array.from(new Set(times));
   if (uniqueTimes.length !== times.length) return json({ error: "DUPLICATE_TIME" }, 400);
 
@@ -74,7 +69,6 @@ export async function POST(req: Request) {
     if (!isValidTimeFormat(t)) return json({ error: "INVALID_TIME_FORMAT" }, 400);
   }
 
-  // ===== 같은 날짜 내 기존 활성 예약 개수 확인 (1차 방어) =====
   const { data: existing, error: exErr } = await supabaseServer
     .from("practice_reservations")
     .select("id")
@@ -89,7 +83,6 @@ export async function POST(req: Request) {
     return json({ error: "DAILY_LIMIT_EXCEEDED" }, 400);
   }
 
-  // ===== RPC 호출 =====
   const { data, error } = await supabaseServer.rpc("practice_create_reservations", {
     p_student_id: guard.studentUserId,
     p_room_id: room_id,

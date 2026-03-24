@@ -182,6 +182,14 @@ export default function AdminLessonsHallSheetPage() {
     [lessons, selectedLessonId]
   );
 
+  const [selectedPracticeId, setSelectedPracticeId] = useState("");
+  const selectedPractice = useMemo(
+    () => practice.find((p) => p.id === selectedPracticeId) ?? null,
+    [practice, selectedPracticeId]
+  );
+
+const [practiceCanceling, setPracticeCanceling] = useState(false);
+
   const [selectedDow, setSelectedDow] = useState<number | null>(null);
   const [hoverTime, setHoverTime] = useState<string>("");
   const [historyOpenFor, setHistoryOpenFor] = useState<string>("");
@@ -341,6 +349,39 @@ export default function AdminLessonsHallSheetPage() {
     setForceEditOpen(false);
     setForceSaving(false);
     setSelectedLessonId(selectedLesson.id);
+    await load();
+  };
+
+  const cancelPracticeReservation = async () => {
+    if (!selectedPractice) return;
+  
+    const ok = confirm(
+      `${selectedPractice.date} ${clampHHMM(selectedPractice.start_time ?? "")}-${clampHHMM(
+        selectedPractice.end_time ?? ""
+      )} ${normalizeRoom(selectedPractice.room_name)}홀\n${selectedPractice.student_name} 연습실 예약을 취소할까?`
+    );
+    if (!ok) return;
+  
+    setPracticeCanceling(true);
+  
+    const res = await authFetch(`/api/admin/practice-reservations/${selectedPractice.id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({
+        reason: "관리자 취소",
+      }),
+    });
+  
+    const json = await res.json().catch(() => ({}));
+  
+    if (!res.ok) {
+      alert(json.error ?? "연습실 예약 취소 실패");
+      setPracticeCanceling(false);
+      return;
+    }
+  
+    alert("연습실 예약 취소 완료");
+    setSelectedPracticeId("");
+    setPracticeCanceling(false);
     await load();
   };
 
@@ -635,6 +676,7 @@ export default function AdminLessonsHallSheetPage() {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() - 7);
     setSelectedLessonId("");
+    setSelectedPracticeId("");
     setHistoryOpenFor("");
     setHoverTime("");
     setWeekStart(ymd(startOfWeek(d)));
@@ -644,6 +686,7 @@ export default function AdminLessonsHallSheetPage() {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setSelectedLessonId("");
+    setSelectedPracticeId("");
     setHistoryOpenFor("");
     setHoverTime("");
     setWeekStart(ymd(startOfWeek(d)));
@@ -651,6 +694,7 @@ export default function AdminLessonsHallSheetPage() {
 
   const goThisWeek = () => {
     setSelectedLessonId("");
+    setSelectedPracticeId("");
     setHistoryOpenFor("");
     setHoverTime("");
 
@@ -1235,33 +1279,45 @@ export default function AdminLessonsHallSheetPage() {
               const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
               const rowSpan = 1;
 
-              return list.map((p) => (
-                <div
-                  key={`${p.id}-${key}`}
-                  style={{
-                    gridColumn: colIndex + (isMobile ? 2 : 3),
-                    gridRow: `${rowStart} / span ${rowSpan}`,
-                    margin: 4,
-                    borderRadius: 10,
-                    border: "2px solid rgba(0,0,0,0.12)",
-                    background: "#f97316",
-                    color: "#fff",
-                    padding: isMobile ? "4px 6px" : "6px 8px",
-                    fontWeight: 900,
-                    fontSize: isMobile ? 11 : 12,
-                    display: "flex",
-                    alignItems: "center",
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    textOverflow: "ellipsis",
-                    zIndex: 5,
-                    opacity: 0.92,
-                  }}
-                  title={`${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${roomNorm}홀\n${p.student_name} (연습실)`}
-                >
-                  {p.student_name}
-                </div>
-              ));
+              return list.map((p) => {
+                const isSelected = selectedPracticeId === p.id;
+              
+                return (
+                  <button
+                    key={`${p.id}-${key}`}
+                    onClick={() => {
+                      setSelectedPracticeId(p.id);
+                      setSelectedLessonId("");
+                      setHistoryOpenFor("");
+                    }}
+                    style={{
+                      gridColumn: colIndex + (isMobile ? 2 : 3),
+                      gridRow: `${rowStart} / span ${rowSpan}`,
+                      margin: 4,
+                      borderRadius: 10,
+                      border: isSelected ? "2px solid #111" : "2px solid rgba(0,0,0,0.12)",
+                      background: "#f97316",
+                      color: "#fff",
+                      padding: isMobile ? "4px 6px" : "6px 8px",
+                      fontWeight: 900,
+                      fontSize: isMobile ? 11 : 12,
+                      display: "flex",
+                      alignItems: "center",
+                      overflow: "hidden",
+                      whiteSpace: "nowrap",
+                      textOverflow: "ellipsis",
+                      zIndex: 5,
+                      opacity: 0.92,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      boxShadow: isSelected ? "0 6px 18px rgba(0,0,0,0.18)" : "none",
+                    }}
+                    title={`${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${roomNorm}홀\n${p.student_name} (연습실)`}
+                  >
+                    {p.student_name}
+                  </button>
+                );
+              });
             })}
 
             {placedLessons.map((l) => {
@@ -1277,7 +1333,10 @@ export default function AdminLessonsHallSheetPage() {
               return (
                 <button
                   key={l.id}
-                  onClick={() => setSelectedLessonId(l.id)}
+                  onClick={() => {
+                    setSelectedLessonId(l.id);
+                    setSelectedPracticeId("");
+                  }}
                   style={{
                     gridColumn: l.colIndex + (isMobile ? 2 : 3),
                     gridRow: `${l.rowStart} / span ${l.rowSpan}`,
@@ -1415,10 +1474,10 @@ export default function AdminLessonsHallSheetPage() {
           </div>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          {!selectedLesson ? (
-            <div style={{ color: "#666", fontSize: 13 }}>블록 클릭하면 상세가 보여요.</div>
-          ) : (
+       <div style={{ marginTop: 12 }}>
+        {!selectedLesson && !selectedPractice ? (
+          <div style={{ color: "#666", fontSize: 13 }}>블록 클릭하면 상세가 보여요.</div>
+          ) : selectedLesson ? (
             <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
               <div
                 style={{
@@ -1497,8 +1556,76 @@ export default function AdminLessonsHallSheetPage() {
                 </div>
               </div>
             </div>
-          )}
-        </div>
+            ) : selectedPractice ? (
+              <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <b>
+                    {selectedPractice.date} {clampHHMM(selectedPractice.start_time ?? "")} ~{" "}
+                    {clampHHMM(selectedPractice.end_time ?? "")} ·{" "}
+                    {normalizeRoom(selectedPractice.room_name)}홀
+                  </b>
+
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      onClick={cancelPracticeReservation}
+                      disabled={practiceCanceling}
+                      style={{
+                        border: "1px solid #b91c1c",
+                        background: "#b91c1c",
+                        color: "#fff",
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                        fontWeight: 900,
+                      }}
+                    >
+                      {practiceCanceling ? "취소 처리 중..." : "연습실 예약 취소"}
+                    </button>
+
+                    <button
+                      onClick={() => setSelectedPracticeId("")}
+                      style={{
+                        border: "1px solid #ddd",
+                        background: "#fff",
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                        fontWeight: 900,
+                      }}
+                    >
+                      선택 해제
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 13 }}>
+                  <div>
+                    유형: <b>연습실 예약</b>
+                  </div>
+                  <div>
+                    수강생: <b>{selectedPractice.student_name}</b>
+                  </div>
+                  <div>
+                    룸: <b>{selectedPractice.room_name || "-"}</b>
+                  </div>
+                  <div>
+                    시간:{" "}
+                    <b>
+                      {clampHHMM(selectedPractice.start_time ?? "")} ~ {clampHHMM(selectedPractice.end_time ?? "")}
+                    </b>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
       </div>
 
       {forceEditOpen && selectedLesson && (

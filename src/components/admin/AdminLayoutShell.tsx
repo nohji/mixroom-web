@@ -15,6 +15,7 @@ const items = [
   { href: "/admin/lessons", label: "레슨 현황" },
   { href: "/admin/lesson-change-requests", label: "레슨변경 요청 관리" },
   { href: "/admin/practice-reservations", label: "연습실 요청 관리" },
+  { href: "/admin/practice-credits", label: "연습실 사용권 관리" },
 ];
 
 export default function AdminLayoutShell({
