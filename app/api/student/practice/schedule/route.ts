@@ -46,7 +46,7 @@ export async function GET(req: Request) {
   });
 
   // 2) lessons (그리드 점유 체크용: 요청 범위만)
-  const { data: lessons, error: lErr } = await supabaseServer
+  const { data: rawLessons, error: lErr } = await supabaseServer
     .from("lessons")
     .select("id, lesson_date, lesson_time, status, room_id")
     .gte("lesson_date", from)
@@ -54,6 +54,11 @@ export async function GET(req: Request) {
     .neq("status", "canceled");
 
   if (lErr) return json({ error: lErr.message }, 500);
+
+  const lessons = (rawLessons ?? []).map((l: any) => ({
+    ...l,
+    room_name: roomNameById.get(String(l.room_id)) ?? null,
+  }));
 
   // 3) reservations (그리드용: 요청 범위만)
   const { data: rawResv, error: pErr } = await supabaseServer
@@ -151,12 +156,12 @@ export async function GET(req: Request) {
       me: { student_id: guard.studentUserId },
       policy,
       rooms: rooms ?? [],
-      lessons: lessons ?? [],
+      lessons,
       reservations,
       my_reservations_in_voucher,
       voucher_summary: {
         today,
-        remaining_hours: baseRemainingHours, // 기존 호환
+        remaining_hours: baseRemainingHours,
         base_remaining_hours: baseRemainingHours,
         extra_free_hours: extraFreeHours,
         paid_hours: paidHours,
@@ -221,7 +226,7 @@ export async function GET(req: Request) {
   const voucher_summary = picked
     ? {
         today,
-        remaining_hours: baseRemainingHours, // 기존 호환용
+        remaining_hours: baseRemainingHours,
         base_remaining_hours: baseRemainingHours,
         extra_free_hours: extraFreeHours,
         paid_hours: paidHours,
@@ -245,9 +250,6 @@ export async function GET(req: Request) {
       };
 
   // 6) 상단 예약내역용
-  // 기존에는 voucher_id 기준만 봤는데,
-  // 추가 무료/유료로 예약된 건 voucher_id가 없을 수 있어서
-  // 학생 본인 + usable 기간 기준으로 조회하는 게 더 안전함
   let my_reservations_in_voucher: any[] = [];
 
   if (voucher_summary.usable_until) {
@@ -289,7 +291,7 @@ export async function GET(req: Request) {
     me: { student_id: guard.studentUserId },
     policy,
     rooms: rooms ?? [],
-    lessons: lessons ?? [],
+    lessons,
     reservations,
     my_reservations_in_voucher,
     voucher_summary,

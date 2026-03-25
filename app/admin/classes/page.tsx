@@ -297,7 +297,10 @@ export default function AdminClassesPage() {
     }
 
     const firstDate = correctedFirstDate(startDate, weekday);
-    const endDate = lessons[lessons.length - 1]?.lesson_date;
+    const endDate = [...lessons]
+    .map(l => l.lesson_date)
+    .sort()
+    .slice(-1)[0];
 
     const res = await authFetch("/api/admin/create-class-manual", {
       method: "POST",
@@ -632,23 +635,16 @@ export default function AdminClassesPage() {
                           gap: 10,
                         }}
                       >
-                        <Field label="요일 변경">
-                          <select
-                            value={weekdayOf(l.lesson_date)}
-                            onChange={(e) =>
-                              updateLesson(l.idx, {
-                                lesson_date: shiftDateToWeekday(l.lesson_date, Number(e.target.value)),
-                              })
-                            }
-                            style={{ ...inputStyle, width: "100%" }}
-                          >
-                            {weekdayLabel.map((d, idx) => (
-                              <option key={idx} value={idx}>
-                                {d}요일
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
+                        <Field label="날짜">
+                        <input
+                          type="date"
+                          value={l.lesson_date}
+                          onChange={(e) =>
+                            updateLesson(l.idx, { lesson_date: e.target.value })
+                          }
+                          style={inputStyle}
+                        />
+                      </Field>
 
                         <Field label="시간">
                           <select
@@ -781,30 +777,20 @@ export default function AdminClassesPage() {
                             </td>
 
                             <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: colors.text }}>
-                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                <div>
-                                  <b>{l.lesson_date}</b>{" "}
-                                  <span style={{ color: colors.textMuted }}>
-                                    ({weekdayLabel[weekdayOf(l.lesson_date)]})
-                                  </span>
-                                </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              <input
+                                type="date"
+                                value={l.lesson_date}
+                                onChange={(e) =>
+                                  updateLesson(l.idx, { lesson_date: e.target.value })
+                                }
+                                style={{ ...inputStyle, width: 160 }}
+                              />
 
-                                <select
-                                  value={weekdayOf(l.lesson_date)}
-                                  onChange={(e) =>
-                                    updateLesson(l.idx, {
-                                      lesson_date: shiftDateToWeekday(l.lesson_date, Number(e.target.value)),
-                                    })
-                                  }
-                                  style={{ ...inputStyle, width: 120 }}
-                                >
-                                  {weekdayLabel.map((d, idx) => (
-                                    <option key={idx} value={idx}>
-                                      {d}요일
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
+                              <span style={{ color: colors.textMuted, fontSize: 12 }}>
+                                {weekdayLabel[weekdayOf(l.lesson_date)]}요일
+                              </span>
+                            </div>
                             </td>
 
                             <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
