@@ -54,7 +54,6 @@ type ChangeQuotaUI = {
   loading: boolean;
   used: number | null;
   limit: number;
-  // period_start/end는 UI에서 "중복 기간" 표시 때문에 더 이상 쓰지 않음(보관만)
   period_start: string | null;
   period_end: string | null;
 };
@@ -247,7 +246,6 @@ export default function StudentLessonChangePage() {
     period_end: null,
   });
 
-  // change modal
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<LessonRow | null>(null);
 
@@ -258,12 +256,10 @@ export default function StudentLessonChangePage() {
   const [acting, setActing] = useState(false);
   const [calMonth, setCalMonth] = useState<Date>(startOfMonth(new Date()));
 
-  // options
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsByDate, setOptionsByDate] = useState<ChangeOptionsByDate>({});
   const [disabledYmdSet, setDisabledYmdSet] = useState<Set<string>>(new Set());
 
-  // toast
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
   const showToast = useCallback((msg: string, kind: ToastKind = "ok") => {
     setToast({ msg, kind });
@@ -317,31 +313,27 @@ export default function StudentLessonChangePage() {
 
   const nextLesson = useMemo(() => {
     const now = Date.now();
-  
+
     const future = lessons
       .filter((l) => {
-        // 🔥 KST 기준으로 정확히 계산
         const [Y, M, D] = l.lesson_date.split("-").map(Number);
         const [hh, mm] = clampHHMM(l.lesson_time).split(":").map(Number);
-  
-        // KST → UTC ms 계산
-        const utcMs =
-          Date.UTC(Y, M - 1, D, hh - 9, mm, 0, 0); // KST는 UTC+9
-  
+
+        const utcMs = Date.UTC(Y, M - 1, D, hh - 9, mm, 0, 0);
         return utcMs >= now;
       })
       .sort((a, b) => {
         const [Y1, M1, D1] = a.lesson_date.split("-").map(Number);
         const [h1, m1] = clampHHMM(a.lesson_time).split(":").map(Number);
         const t1 = Date.UTC(Y1, M1 - 1, D1, h1 - 9, m1);
-  
+
         const [Y2, M2, D2] = b.lesson_date.split("-").map(Number);
         const [h2, m2] = clampHHMM(b.lesson_time).split(":").map(Number);
         const t2 = Date.UTC(Y2, M2 - 1, D2, h2 - 9, m2);
-  
+
         return t1 - t2;
       });
-  
+
     return future[0] ?? null;
   }, [lessons]);
 
@@ -356,8 +348,6 @@ export default function StudentLessonChangePage() {
     return new Date().getTime() < cutoff.getTime();
   }, [activeClass, nextLesson, pendingByLesson]);
 
-  // ✅ 화면에서 “기간 중복 표시” 제거:
-  // period_start/end는 저장만 하고 UI에는 출력하지 않음
   const loadChangeQuotaFromRpc = useCallback(async (classId: string) => {
     setChangeQuota((p) => ({ ...p, loading: true }));
 
@@ -587,7 +577,7 @@ export default function StudentLessonChangePage() {
         lesson_id: String(p.lesson_id),
         request_type: String(p.request_type) as RequestType,
         created_at: String(p.created_at),
-        requested_changes: p.requested_changes
+        requested_changes: p.requested_changes,
       });
     });
     setPendingByLesson(map);
@@ -621,7 +611,6 @@ export default function StudentLessonChangePage() {
       setSelected(lesson);
       setNewDate(lesson.lesson_date);
       setNewTime(clampHHMM(lesson.lesson_time));
-     // setNewRoomId(lesson.room_id ?? "");
       setReason("");
 
       const baseMonth = startOfMonth(parseLocalDate(lesson.lesson_date));
@@ -668,16 +657,13 @@ export default function StudentLessonChangePage() {
       showToast("날짜와 시간을 선택해주세요.", "warn");
       return;
     }
-    
+
     if (!reason.trim()) {
       showToast("변경 사유를 입력해주세요.", "warn");
       return;
     }
 
-    const okSlot =
-    !!optionsByDate[newDate]?.times?.some(
-      (t) => t.time === newTime
-    );
+    const okSlot = !!optionsByDate[newDate]?.times?.some((t) => t.time === newTime);
 
     if (!okSlot) {
       showToast("선택한 옵션이 현재는 불가능해요. 새로고침 후 다시 선택해 주세요.", "warn");
@@ -706,7 +692,7 @@ export default function StudentLessonChangePage() {
       return;
     }
 
-    showToast("변경 요청이 접수되었습니다. 관리자 확인 후 변경 여부가 확정되며 결과를 안내드리겠습니다.","ok");
+    showToast("변경 요청이 접수되었습니다. 관리자 확인 후 변경 여부가 확정되며 결과를 안내드리겠습니다.", "ok");
     setOpen(false);
     setSelected(null);
     setOptionsByDate({});
@@ -714,9 +700,6 @@ export default function StudentLessonChangePage() {
     await load();
   };
 
-  // ✅ 취소가 “가끔 안되는” 문제 방지:
-  // - RLS에서 delete 막히는 케이스가 가장 흔함 → student_id + status=PENDING 조건도 같이 걸어줌(안전)
-  // - delete 후 select로 확인까지 하고, 실제로 지워졌는지 검증
   const cancelPendingRequest = async (lessonId: string) => {
     const req = pendingByLesson.get(lessonId);
     if (!req) return;
@@ -736,7 +719,7 @@ export default function StudentLessonChangePage() {
       .eq("id", req.id)
       .eq("student_id", meId)
       .eq("status", "PENDING")
-      .select("id"); // ✅ 삭제된 row 리턴(0개면 실제 삭제 안된 것)
+      .select("id");
 
     setActing(false);
 
@@ -793,22 +776,102 @@ export default function StudentLessonChangePage() {
     return activeClass.type === "3month" ? "3개월권" : "1개월권";
   }, [activeClass]);
 
-  // ✅ 기간 중복 표시 개선:
-  // - "변경 가능 기간: ..." 라인을 제거
-  // - 변경권 라벨도 짧게
   const changeQuotaLabel = useMemo(() => {
     if (!activeClass) return "변경권";
     return activeClass.type === "3month" ? "변경권(3개월권)" : "변경권(1개월권)";
   }, [activeClass]);
 
+  const overlayTitle = loading
+    ? "수강권 정보를 불러오는 중이에요"
+    : acting
+    ? "요청을 처리하는 중이에요"
+    : "가능한 시간을 찾는 중이에요";
+
+  const overlayDesc = loading
+    ? "수강권, 레슨 목록, 대기중인 요청을 확인하고 있어요"
+    : acting
+    ? "변경 요청 또는 취소 요청을 처리하고 있어요"
+    : "강사 일정, 레슨, 연습실, 운영차단을 확인하고 있어요";
+
   return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: 16, background: "#f6f7f9", minHeight: "100vh" }}>
+    <div
+      style={{
+        maxWidth: 560,
+        margin: "0 auto",
+        padding: 16,
+        background: "#f6f7f9",
+        minHeight: "100vh",
+        position: "relative",
+      }}
+    >
+      {(loading || acting || optionsLoading) && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(255,255,255,0.78)",
+            backdropFilter: "blur(2px)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: "min(320px, 90vw)",
+              borderRadius: 18,
+              background: "#111",
+              color: "#fff",
+              padding: "22px 20px",
+              textAlign: "center",
+              boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              style={{
+                width: 30,
+                height: 30,
+                margin: "0 auto 12px",
+                borderRadius: "50%",
+                border: "3px solid rgba(255,255,255,0.25)",
+                borderTopColor: "#fff",
+                animation: "studentSpin 0.8s linear infinite",
+              }}
+            />
+            <div style={{ fontSize: 15, fontWeight: 1000 }}>{overlayTitle}</div>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "rgba(255,255,255,0.82)",
+                lineHeight: "18px",
+              }}
+            >
+              {overlayDesc}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx global>{`
+        @keyframes studentSpin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
+
       <StudentTopNav />
 
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ fontWeight: 1000, fontSize: 20, color: "#111" }}>레슨 변경 / 연장</div>
         <div style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, color: "#111" }}>
-          {loading ? "로딩중..." : activeClass ? "조회 완료" : "수강권 없음"}
+          {loading ? "수강권 확인 중..." : activeClass ? "조회 완료" : "수강권 없음"}
         </div>
       </div>
 
@@ -816,7 +879,6 @@ export default function StudentLessonChangePage() {
         변경·연장 요청은 접수 후 관리자가 확인하여 반영합니다.
       </div>
 
-      {/* Summary */}
       <div style={{ marginTop: 12, border: "1px solid #d7dbe0", borderRadius: 14, background: "#fff", padding: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 1100, fontSize: 14, color: "#111" }}>내 수강권</div>
@@ -852,8 +914,6 @@ export default function StudentLessonChangePage() {
             }
           />
 
-          {/* ✅ “변경 가능 기간: …” 중복 라인 제거 */}
-
           <Row
             k="연장권(3개월권)"
             v={activeClass ? `${activeClass.extension_uses_used}/${activeClass.extension_uses_total}` : "-"}
@@ -878,7 +938,6 @@ export default function StudentLessonChangePage() {
         </div>
       </div>
 
-      {/* Next lesson + Extension */}
       <div style={{ marginTop: 12, border: "1px solid #d7dbe0", borderRadius: 14, background: "#fff", padding: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 1100, fontSize: 14, color: "#111" }}>가장 가까운 다음 수업</div>
@@ -930,7 +989,6 @@ export default function StudentLessonChangePage() {
         )}
       </div>
 
-      {/* Lessons */}
       <div style={{ marginTop: 14 }}>
         <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 12 }}>📌 레슨 목록</div>
 
@@ -1000,15 +1058,14 @@ export default function StudentLessonChangePage() {
                       </button>
 
                       <div style={{ fontSize: 16, color: "#444", fontWeight: 900, lineHeight: "20px" }}>
-                      <b>
-                        (변경요청){" "}
-                        {pending.requested_changes?.lesson_date}{" "}
-                        {pending.requested_changes?.lesson_time?.slice(0,5)} 
-                      </b>
-                      <br />
-                      <span style={{ fontSize: 12, color: "#666" }}>
-                        * 관리자 확인 후 변경 여부가 확정됩니다.
-                      </span>
+                        <b>
+                          (변경요청) {pending.requested_changes?.lesson_date}{" "}
+                          {pending.requested_changes?.lesson_time?.slice(0, 5)}
+                        </b>
+                        <br />
+                        <span style={{ fontSize: 12, color: "#666" }}>
+                          * 관리자 확인 후 변경 여부가 확정됩니다.
+                        </span>
                       </div>
                     </div>
                   ) : (
@@ -1046,7 +1103,6 @@ export default function StudentLessonChangePage() {
 
       <div style={{ height: 30 }} />
 
-      {/* ===== Change modal ===== */}
       {open && selected && (
         <div
           style={{
@@ -1071,8 +1127,8 @@ export default function StudentLessonChangePage() {
               margin: "0 auto",
               border: "1px solid #d7dbe0",
               boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
-              maxHeight: "85vh",   // ✅ 화면 높이 제한
-              overflowY: "auto",   // ✅ 세로 스크롤 생성
+              maxHeight: "85vh",
+              overflowY: "auto",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1098,7 +1154,9 @@ export default function StudentLessonChangePage() {
             >
               대상: <b>{selected.lesson_date}</b> {clampHHMM(selected.lesson_time)} · 강사{" "}
               <b>{selected.teacher_name ?? "-"}</b> · 룸 <b>{selected.room_name ?? "-"}</b>
-              <div style={{ marginTop: 6, color: "#666", fontWeight: 900 }}>* 선택 가능한 날짜와 시간만 활성화됩니다.</div>
+              <div style={{ marginTop: 6, color: "#666", fontWeight: 900 }}>
+                * 선택 가능한 날짜와 시간만 활성화됩니다.
+              </div>
             </div>
 
             <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -1170,7 +1228,9 @@ export default function StudentLessonChangePage() {
                 ))}
               </select>
 
-              <div style={{ marginTop: 6, fontSize: 12, color: "#666", fontWeight: 900 }}>* 시간은 1시간 단위로만 선택됩니다.</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: "#666", fontWeight: 900 }}>
+                * 시간은 1시간 단위로만 선택됩니다.
+              </div>
             </div>
 
             <div style={{ marginTop: 12 }}>
@@ -1190,13 +1250,13 @@ export default function StudentLessonChangePage() {
                   fontSize: 14,
                   fontWeight: 900,
                   resize: "none",
-                  color: "#111"
+                  color: "#111",
                 }}
               />
             </div>
 
             <div style={{ marginTop: 10, fontSize: 12, color: "#111", fontWeight: 1100 }}>
-              선택: <b>{newDate || "(날짜 미선택)"}</b> / <b>{newTime || "(시간 미선택)"}</b> 
+              선택: <b>{newDate || "(날짜 미선택)"}</b> / <b>{newTime || "(시간 미선택)"}</b>
             </div>
 
             <button
@@ -1242,7 +1302,6 @@ export default function StudentLessonChangePage() {
         </div>
       )}
 
-      {/* Toast */}
       {toast && (
         <div
           style={{
@@ -1300,7 +1359,7 @@ function selectStyle(): React.CSSProperties {
     fontSize: 15,
     fontWeight: 1000,
     background: "#fff",
-    color: "#111"
+    color: "#111",
   };
 }
 

@@ -48,6 +48,14 @@ function cmpLesson(
   return a.lesson_time.localeCompare(b.lesson_time);
 }
 
+function normalizeReservationKind(v: any): "STUDENT" | "ADMIN_BLOCK" {
+  const s = String(v ?? "").trim().toUpperCase();
+  if (s === "ADMIN_BLOCK" || s === "ADMIN-BLOCK" || s === "BLOCK") {
+    return "ADMIN_BLOCK";
+  }
+  return "STUDENT";
+}
+
 type DeviceType = "controller" | "turntable" | "both";
 
 export async function GET(req: Request) {
@@ -116,10 +124,9 @@ export async function GET(req: Request) {
     });
 
     /* ---------------------------------
-     * ✅ ADD) Practice reservations (admin weekly)
-     *  - canceled 제외
-     *  - date(from~to)로 주간 조회
-     *  - start_time/end_time은 HH:mm(text)
+     * 2.1) Practice reservations (admin weekly)
+     *  - 운영차단도 포함
+     *  - voucher 없는 row도 보이도록 inner join 제거
      * --------------------------------- */
     let practiceQ = supabaseServer
       .from("practice_reservations")
@@ -132,10 +139,12 @@ export async function GET(req: Request) {
         start_time,
         end_time,
         status,
-        voucher:practice_vouchers!inner (
+        reservation_kind,
+        admin_block_reason,
+        voucher:practice_vouchers (
           id,
           class_id,
-          class:classes!inner (
+          class:classes (
             id,
             student_id
           )
@@ -144,7 +153,7 @@ export async function GET(req: Request) {
       )
       .gte("date", from)
       .lte("date", to)
-      .eq("status", "APPROVED")
+      .in("status", ["APPROVED"])
       .order("date", { ascending: true })
       .order("start_time", { ascending: true });
 
@@ -155,7 +164,7 @@ export async function GET(req: Request) {
 
     const practiceRowsRaw: any[] = practiceData ?? [];
 
-    // ✅ practice에서 나온 student/room도 맵 구성에 포함
+    // practice에서 나온 student/room도 맵 구성에 포함
     practiceRowsRaw.forEach((r) => {
       if (r.room_id) roomIds.add(String(r.room_id));
 
@@ -165,9 +174,7 @@ export async function GET(req: Request) {
     });
 
     /* ---------------------------------
-     * 2.5) ✅ targetTeacherIds (availability용) 먼저 확정
-     *      - teacherId 지정: 해당 강사만
-     *      - 미지정: 활성 근무가 등록된 전체 강사
+     * 2.5) availability 대상 teacher ids
      * --------------------------------- */
     let targetTeacherIds: string[] = [];
     if (teacherId) {
@@ -185,7 +192,6 @@ export async function GET(req: Request) {
 
     /* ---------------------------------
      * 3) profiles name map
-     *    ✅ availability 강사들도 nameMap에 포함
      * --------------------------------- */
     const nameMap = new Map<string, string>();
     const allProfileIds = Array.from(
@@ -203,7 +209,7 @@ export async function GET(req: Request) {
     }
 
     /* ---------------------------------
-     * 4) room map (✅ practice room_id도 포함된 roomIds 사용)
+     * 4) room map
      * --------------------------------- */
     const roomMap = new Map<string, string>();
     const roomIdList = Array.from(roomIds);
@@ -218,7 +224,7 @@ export async function GET(req: Request) {
     }
 
     /* ---------------------------------
-     * 5) 진행회차 계산: 해당 class의 전체 lessons 조회
+     * 5) 진행회차 계산
      * --------------------------------- */
     const classLessonIndex = new Map<string, Map<string, number>>();
     const classIdList = Array.from(classIds);
@@ -298,9 +304,7 @@ export async function GET(req: Request) {
     if (roomId) lessons = lessons.filter((l) => l.room_id === roomId);
 
     /* ---------------------------------
-     * ✅ ADD) Practice (frontend-friendly)
-     *  - 취소 제외됨(조회에서 이미 제외)
-     *  - 오렌지 블록 표시용 최소 필드
+     * 6.1) Practice reservations (frontend-friendly)
      * --------------------------------- */
     const practice_reservations = practiceRowsRaw.map((r) => {
       const rid = r.room_id ? String(r.room_id) : null;
@@ -312,30 +316,37 @@ export async function GET(req: Request) {
       const studentId = c?.student_id ? String(c.student_id) : null;
 
       const ymd = String(r.date ?? "");
-      const st = String(r.start_time ?? ""); // "HH:mm"
-      const et = String(r.end_time ?? ""); // "HH:mm"
+      const st = String(r.start_time ?? "");
+      const et = String(r.end_time ?? "");
 
-      // ✅ 프론트 그리드에서 겹침 계산 쉽게: ISO 비슷하게 합쳐서 내려줌
       const start_ts = ymd && st ? `${ymd}T${st}:00` : null;
       const end_ts = ymd && et ? `${ymd}T${et}:00` : null;
+
+      const reservationKind = normalizeReservationKind(r.reservation_kind);
+      const isAdminBlock = reservationKind === "ADMIN_BLOCK";
 
       return {
         id: String(r.id),
         room_id: rid,
         room_name: roomName,
 
-        date: ymd || null,
+        date: ymd,
         start_time: st || null,
         end_time: et || null,
 
-        // grid용
         start_ts,
         end_ts,
 
         status: String(r.status ?? ""),
+        reservation_kind: reservationKind,
+        admin_block_reason: r.admin_block_reason ?? null,
 
         student_id: studentId,
-        student_name: studentId ? nameMap.get(studentId) ?? "알 수 없음" : "알 수 없음",
+        student_name: isAdminBlock
+          ? "운영차단"
+          : studentId
+          ? nameMap.get(studentId) ?? "알 수 없음"
+          : "알 수 없음",
 
         voucher_id: v?.id ? String(v.id) : r.voucher_id ? String(r.voucher_id) : null,
         class_id: v?.class_id ? String(v.class_id) : null,
@@ -343,7 +354,7 @@ export async function GET(req: Request) {
     });
 
     /* ---------------------------------
-     * 7) Availability (레슨 없어도 표시)
+     * 7) Availability
      * --------------------------------- */
     const fromD = toDateStart(from);
     const toD = toDateStart(to);
@@ -417,8 +428,6 @@ export async function GET(req: Request) {
       today: lessons.filter((r) => r.lesson_date === todayStr()).length,
       overrideOn: lessons.filter((r) => r.allow_change_override === true).length,
       availability_events: availability.length,
-
-      // ✅ ADD
       practice_total: practice_reservations.length,
     };
 
@@ -426,10 +435,7 @@ export async function GET(req: Request) {
       summary,
       lessons,
       availability,
-
-      // ✅ ADD
       practice_reservations,
-
       range: { from, to },
       filters: { teacherId: teacherId ?? null, roomId: roomId ?? null },
     });

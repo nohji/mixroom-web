@@ -125,6 +125,20 @@ export default function AdminClassesPage() {
     const ph = s.phone?.trim() ? s.phone : "전화없음";
     return `${nm} (${ph})`;
   };
+
+  const sortedStudents = useMemo(() => {
+    return [...students].sort((a, b) => {
+      const an = String(a.name ?? "").trim();
+      const bn = String(b.name ?? "").trim();
+  
+      if (!an && !bn) return 0;
+      if (!an) return 1;
+      if (!bn) return -1;
+  
+      return an.localeCompare(bn, "ko");
+    });
+  }, [students]);
+
   const teacherLabel = (t: TeacherOption) => {
     const nm = t.name?.trim() ? t.name : "이름없음";
     const ph = t.phone?.trim() ? t.phone : "전화없음";
@@ -365,7 +379,7 @@ export default function AdminClassesPage() {
                 ) : students.length === 0 ? (
                   <option value="">수강생 없음</option>
                 ) : (
-                  students.map((s) => (
+                  sortedStudents.map((s) => (
                     <option key={s.id} value={s.id}>
                       {studentLabel(s)}
                     </option>

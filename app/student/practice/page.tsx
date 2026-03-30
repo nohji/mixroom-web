@@ -122,15 +122,11 @@ function statusBadge(status: string) {
 
 type VoucherSummary = {
   today?: string;
-
-  // 기존 필드
   remaining_hours: number;
   usable_until: string | null;
   usable_from?: string | null;
   has_voucher?: boolean;
   active_voucher_ids?: string[];
-
-  // 추가 필드
   base_remaining_hours?: number;
   extra_free_hours?: number;
   paid_hours?: number;
@@ -159,8 +155,8 @@ function addDaysLocal(base: Date, days: number) {
 
 function getPracticeReservePolicyRange() {
   const today = todayStartLocal();
-  const minDate = addDaysLocal(today, 2); // 오늘+2일
-  const maxDate = addDaysLocal(today, 30); // 오늘+30일
+  const minDate = addDaysLocal(today, 2);
+  const maxDate = addDaysLocal(today, 30);
   return {
     minYmd: ymd(minDate),
     maxYmd: ymd(maxDate),
@@ -189,6 +185,7 @@ export default function PracticeStudentPage() {
   const [me, setMe] = useState<string>("");
   const [pickedTimes, setPickedTimes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState(false);
 
   const [voucherSummary, setVoucherSummary] = useState<VoucherSummary | null>(null);
   const [policy, setPolicy] = useState<{ daily_limit_hours: number } | null>(null);
@@ -231,7 +228,6 @@ export default function PracticeStudentPage() {
     return Number(voucherSummary?.paid_hours ?? 0);
   }, [voucherSummary]);
 
-  // 날짜 바뀌어도 렌더 시 자동 반영
   const practicePolicyRange = getPracticeReservePolicyRange();
   const reserveMinYmd = practicePolicyRange.minYmd;
   const reserveMaxYmd = practicePolicyRange.maxYmd;
@@ -315,8 +311,11 @@ export default function PracticeStudentPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    await loadWeek();
-    setLoading(false);
+    try {
+      await loadWeek();
+    } finally {
+      setLoading(false);
+    }
   }, [loadWeek]);
 
   useEffect(() => {
@@ -396,6 +395,8 @@ export default function PracticeStudentPage() {
   }
 
   const togglePick = (t: string) => {
+    if (loading || acting) return;
+
     const st = slotStatus(selectedDate, t, selectedRoom);
     if (st.kind !== "free") return;
 
@@ -430,7 +431,7 @@ export default function PracticeStudentPage() {
   };
 
   async function reserve() {
-    if (pickedTimes.length === 0) return;
+    if (pickedTimes.length === 0 || acting) return;
 
     if (!isPracticeReservableDate(selectedDate)) {
       showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
@@ -456,32 +457,39 @@ export default function PracticeStudentPage() {
       return;
     }
 
-    const res = await authFetch("/api/student/practice/reservations", {
-      method: "POST",
-      body: JSON.stringify({
-        room_id: roomObj.id,
-        date: selectedDate,
-        times: pickedTimes,
-        device_type: "controller",
-      }),
-    });
+    setActing(true);
+    try {
+      const res = await authFetch("/api/student/practice/reservations", {
+        method: "POST",
+        body: JSON.stringify({
+          room_id: roomObj.id,
+          date: selectedDate,
+          times: pickedTimes,
+          device_type: "controller",
+        }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      showToast(mapPracticeError(String(data.error ?? "")), "err");
-      return;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(mapPracticeError(String(data.error ?? "")), "err");
+        return;
+      }
+
+      showToast("신청 완료! 관리자 승인 후 확정됩니다.", "ok");
+      setPickedTimes([]);
+      await load();
+
+      setTimeout(() => {
+        reservationListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 120);
+    } finally {
+      setActing(false);
     }
-
-    showToast("신청 완료! 관리자 승인 후 확정됩니다.", "ok");
-    setPickedTimes([]);
-    await load();
-
-    setTimeout(() => {
-      reservationListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 120);
   }
 
   async function cancel(id: string, dateStr: string, startHHMM: string) {
+    if (acting) return;
+
     const canCancel = canCancelBy48Hours(dateStr, startHHMM);
     if (!canCancel) {
       showToast("48시간 전부터는 취소할 수 없습니다.", "warn");
@@ -491,22 +499,27 @@ export default function PracticeStudentPage() {
     const ok = confirm("예약을 취소할까요?");
     if (!ok) return;
 
-    const res = await authFetch(`/api/student/practice/reservations/${id}/cancel`, {
-      method: "POST",
-    });
-    const json = await res.json().catch(() => ({}));
+    setActing(true);
+    try {
+      const res = await authFetch(`/api/student/practice/reservations/${id}/cancel`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
 
-    if (!res.ok) {
-      showToast(String(json.message ?? json.error ?? "취소 실패"), "err");
-      return;
+      if (!res.ok) {
+        showToast(String(json.message ?? json.error ?? "취소 실패"), "err");
+        return;
+      }
+
+      showToast("취소되었습니다.", "ok");
+      await load();
+    } finally {
+      setActing(false);
     }
-
-    showToast("취소되었습니다.", "ok");
-    await load();
   }
 
   const goPrevWeek = () => {
-    if (!canGoPrevWeek) return;
+    if (!canGoPrevWeek || loading || acting) return;
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() - 7);
     setWeekStart(ymd(startOfWeek(d)));
@@ -514,7 +527,7 @@ export default function PracticeStudentPage() {
   };
 
   const goNextWeek = () => {
-    if (!canGoNextWeek) return;
+    if (!canGoNextWeek || loading || acting) return;
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setWeekStart(ymd(startOfWeek(d)));
@@ -522,6 +535,7 @@ export default function PracticeStudentPage() {
   };
 
   const goThisWeek = () => {
+    if (loading || acting) return;
     setWeekStart(ymd(startOfWeek(new Date())));
     setSelectedDate(reserveMinYmd);
     setPickedTimes([]);
@@ -538,6 +552,12 @@ export default function PracticeStudentPage() {
     return sortedVoucherReservations.slice(0, listVisibleCount);
   }, [sortedVoucherReservations, listVisibleCount]);
 
+  const overlayVisible = loading || acting;
+  const overlayTitle = acting ? "처리 중이에요" : "연습실 정보를 불러오는 중이에요";
+  const overlayDesc = acting
+    ? "예약 또는 취소 요청을 처리하고 있어요"
+    : "예약 내역, 이용권, 스케줄을 확인하고 있어요";
+
   return (
     <div
       style={{
@@ -546,15 +566,96 @@ export default function PracticeStudentPage() {
         padding: 16,
         background: "#f6f7f9",
         minHeight: "100vh",
+        position: "relative",
       }}
     >
+      {overlayVisible && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(255,255,255,0.78)",
+            backdropFilter: "blur(2px)",
+            zIndex: 9998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: "min(340px, 90vw)",
+              borderRadius: 18,
+              background: "#111",
+              color: "#fff",
+              padding: "22px 20px",
+              textAlign: "center",
+              boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div
+              style={{
+                width: 30,
+                height: 30,
+                margin: "0 auto 12px",
+                borderRadius: "50%",
+                border: "3px solid rgba(255,255,255,0.25)",
+                borderTopColor: "#fff",
+                animation: "practiceSpin 0.8s linear infinite",
+              }}
+            />
+            <div style={{ fontSize: 15, fontWeight: 1000 }}>{overlayTitle}</div>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "rgba(255,255,255,0.82)",
+                lineHeight: "18px",
+              }}
+            >
+              {overlayDesc}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx global>{`
+        @keyframes practiceSpin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
+
       <StudentTopNav />
 
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ fontWeight: 1000, fontSize: 20, color: "#111" }}>연습실 예약</div>
         <div style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, color: "#111" }}>
-          {loading ? "로딩중..." : `오늘 내 예약 ${myActiveCountToday}/2`}
+          {loading ? "불러오는 중..." : `오늘 내 예약 ${myActiveCountToday}/2`}
         </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: 8,
+          padding: "10px 12px",
+          borderRadius: 12,
+          background: loading ? "#111" : "#f3f4f6",
+          border: loading ? "1px solid #111" : "1px solid #d7dbe0",
+          color: loading ? "#fff" : "#111",
+          fontWeight: 1000,
+          fontSize: 12,
+          lineHeight: "18px",
+        }}
+      >
+        {loading
+          ? "연습실 이용권, 예약 내역, 시간표를 불러오는 중입니다."
+          : "원하는 날짜와 홀을 선택한 뒤 가능한 시간대를 눌러 예약할 수 있어요."}
       </div>
 
       {/* 예약 내역 상단 */}
@@ -579,12 +680,27 @@ export default function PracticeStudentPage() {
               </b>
             </div>
 
-            <button onClick={load} style={btnPrimary()} disabled={loading}>
+            <button onClick={load} style={btnPrimary()} disabled={loading || acting}>
               새로고침
             </button>
           </div>
 
-          {sortedVoucherReservations.length === 0 ? (
+          {loading ? (
+            <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  style={{
+                    height: 82,
+                    borderRadius: 16,
+                    background: "#f3f4f6",
+                    border: "1px solid #e5e7eb",
+                    animation: "practicePulse 1.2s ease-in-out infinite",
+                  }}
+                />
+              ))}
+            </div>
+          ) : sortedVoucherReservations.length === 0 ? (
             <div
               style={{
                 marginTop: 10,
@@ -673,7 +789,7 @@ export default function PracticeStudentPage() {
 
                       {active ? (
                         <button
-                          disabled={!canCancel}
+                          disabled={!canCancel || acting}
                           onClick={() => cancel(r.id, r.date, clampHHMM(r.start_time))}
                           style={{
                             padding: "10px 12px",
@@ -682,8 +798,8 @@ export default function PracticeStudentPage() {
                             background: canCancel ? "#ff4d4f" : active ? "rgba(255,255,255,0.18)" : "#fff",
                             color: active ? "#fff" : "#111",
                             fontWeight: 1100,
-                            cursor: canCancel ? "pointer" : "not-allowed",
-                            opacity: canCancel ? 1 : 0.65,
+                            cursor: canCancel && !acting ? "pointer" : "not-allowed",
+                            opacity: canCancel && !acting ? 1 : 0.65,
                           }}
                           title={!canCancel ? "48시간 전부터는 취소할 수 없어요." : "예약 취소"}
                         >
@@ -710,6 +826,7 @@ export default function PracticeStudentPage() {
                     borderRadius: 14,
                     fontWeight: 1100,
                   }}
+                  disabled={loading || acting}
                 >
                   더보기 ({listVisibleCount}/{sortedVoucherReservations.length})
                 </button>
@@ -820,21 +937,21 @@ export default function PracticeStudentPage() {
           gap: 10,
         }}
       >
-        <button onClick={goPrevWeek} style={btnGhost(!canGoPrevWeek)} disabled={!canGoPrevWeek}>
+        <button onClick={goPrevWeek} style={btnGhost(!canGoPrevWeek)} disabled={!canGoPrevWeek || loading || acting}>
           ◀
         </button>
         <div style={{ fontWeight: 1000, fontSize: 13, color: "#111" }}>
           {weekFrom} ~ {weekTo}
         </div>
-        <button onClick={goNextWeek} style={btnGhost(!canGoNextWeek)} disabled={!canGoNextWeek}>
+        <button onClick={goNextWeek} style={btnGhost(!canGoNextWeek)} disabled={!canGoNextWeek || loading || acting}>
           ▶
         </button>
 
-        <button onClick={goThisWeek} style={{ ...btnGhost(false), marginLeft: "auto" }}>
+        <button onClick={goThisWeek} style={{ ...btnGhost(false), marginLeft: "auto" }} disabled={loading || acting}>
           이번주
         </button>
 
-        <button onClick={load} style={btnPrimary()} disabled={loading}>
+        <button onClick={load} style={btnPrimary()} disabled={loading || acting}>
           새로고침
         </button>
       </div>
@@ -851,13 +968,15 @@ export default function PracticeStudentPage() {
 
             const outOfVoucher = !inRangeDate(dateStr, voucherFrom, voucherTo);
             const outOfPolicy = !isPracticeReservableDate(dateStr);
-            const blocked = outOfVoucher || outOfPolicy;
+            const blocked = outOfVoucher || outOfPolicy || loading || acting;
             const opacity = blocked ? 0.55 : 1;
 
             return (
               <button
                 key={dateStr}
                 onClick={() => {
+                  if (loading || acting) return;
+
                   if (outOfPolicy) {
                     showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
                     return;
@@ -910,6 +1029,7 @@ export default function PracticeStudentPage() {
             <button
               key={r}
               onClick={() => {
+                if (loading || acting) return;
                 setSelectedRoom(r);
                 setPickedTimes([]);
               }}
@@ -921,8 +1041,10 @@ export default function PracticeStudentPage() {
                 background: isSel ? "#111" : "#fff",
                 color: isSel ? "#fff" : "#111",
                 fontWeight: 1000,
-                cursor: "pointer",
+                cursor: loading || acting ? "not-allowed" : "pointer",
+                opacity: loading || acting ? 0.6 : 1,
               }}
+              disabled={loading || acting}
             >
               {r}홀
             </button>
@@ -936,132 +1058,162 @@ export default function PracticeStudentPage() {
           시간 선택 (하루 최대 2시간 · 연속/비연속 가능)
         </div>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          {getSlots(parseYmd(selectedDate)).map((t) => {
-            const st = slotStatus(selectedDate, t, selectedRoom);
-            const picked = pickedTimes.includes(t);
+        {loading ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  height: 64,
+                  borderRadius: 16,
+                  background: "#f3f4f6",
+                  border: "1px solid #e5e7eb",
+                  animation: "practicePulse 1.2s ease-in-out infinite",
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {getSlots(parseYmd(selectedDate)).map((t) => {
+              const st = slotStatus(selectedDate, t, selectedRoom);
+              const picked = pickedTimes.includes(t);
 
-            if (st.kind === "mine" && String(st.resv.status).toUpperCase() === "APPROVED") {
-              return null;
-            }
+              if (st.kind === "mine" && String(st.resv.status).toUpperCase() === "APPROVED") {
+                return null;
+              }
 
-            const baseCard: React.CSSProperties = {
-              padding: 12,
-              borderRadius: 16,
-              border: "1px solid #d7dbe0",
-              background: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-            };
+              const baseCard: React.CSSProperties = {
+                padding: 12,
+                borderRadius: 16,
+                border: "1px solid #d7dbe0",
+                background: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+              };
 
-            if (st.kind === "lesson") {
-              return (
-                <div key={t} style={{ ...baseCard, background: "#f0f2f5", border: "2px dashed rgba(0,0,0,0.35)" }}>
-                  <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
-                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약 마감</div>
-                </div>
-              );
-            }
+              if (st.kind === "lesson") {
+                return (
+                  <div key={t} style={{ ...baseCard, background: "#f0f2f5", border: "2px dashed rgba(0,0,0,0.35)" }}>
+                    <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
+                    <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약 마감</div>
+                  </div>
+                );
+              }
 
-            if (st.kind === "occupied") {
-              return (
-                <div key={t} style={{ ...baseCard, background: "#e9edf2" }}>
-                  <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
-                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약 마감</div>
-                </div>
-              );
-            }
+              if (st.kind === "occupied") {
+                return (
+                  <div key={t} style={{ ...baseCard, background: "#e9edf2" }}>
+                    <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
+                    <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>예약 마감</div>
+                  </div>
+                );
+              }
 
-            if (st.kind === "mine") {
-              const badge = statusBadge(st.resv.status);
-              const canCancel = canCancelBy48Hours(st.resv.date, clampHHMM(st.resv.start_time));
+              if (st.kind === "mine") {
+                const badge = statusBadge(st.resv.status);
+                const canCancel = canCancelBy48Hours(st.resv.date, clampHHMM(st.resv.start_time));
 
-              return (
-                <div key={t} style={{ ...baseCard, background: "#111", border: "1px solid #111" }}>
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ fontWeight: 1100, color: "#fff" }}>{t}</div>
-                      <span
-                        style={{
-                          padding: "4px 8px",
-                          borderRadius: 999,
-                          background: badge.bg,
-                          color: badge.fg,
-                          fontWeight: 1100,
-                          fontSize: 11,
-                        }}
-                      >
-                        {badge.label}
-                      </span>
+                return (
+                  <div key={t} style={{ ...baseCard, background: "#111", border: "1px solid #111" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontWeight: 1100, color: "#fff" }}>{t}</div>
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            background: badge.bg,
+                            color: badge.fg,
+                            fontWeight: 1100,
+                            fontSize: 11,
+                          }}
+                        >
+                          {badge.label}
+                        </span>
+                      </div>
+
+                      {isRejectedStatus(st.resv.status) && st.resv.rejected_reason ? (
+                        <div style={{ fontSize: 12, fontWeight: 1000, color: "#ffd5d5", marginTop: 6 }}>
+                          사유: {st.resv.rejected_reason}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, fontWeight: 1000, color: "#eaeaea", marginTop: 6 }}>
+                          {String(st.resv.status).toUpperCase() === "PENDING"
+                            ? "관리자 승인 후 확정됩니다."
+                            : canCancel
+                            ? "취소 가능"
+                            : "취소 마감(48시간 전)"}
+                        </div>
+                      )}
                     </div>
 
-                    {isRejectedStatus(st.resv.status) && st.resv.rejected_reason ? (
-                      <div style={{ fontSize: 12, fontWeight: 1000, color: "#ffd5d5", marginTop: 6 }}>
-                        사유: {st.resv.rejected_reason}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 12, fontWeight: 1000, color: "#eaeaea", marginTop: 6 }}>
-                        {String(st.resv.status).toUpperCase() === "PENDING"
-                          ? "관리자 승인 후 확정됩니다."
-                          : canCancel
-                          ? "취소 가능"
-                          : "취소 마감(48시간 전)"}
-                      </div>
-                    )}
+                    {isActiveReservationStatus(st.resv.status) ? (
+                      <button
+                        onClick={() => cancel(st.resv.id, st.resv.date, clampHHMM(st.resv.start_time))}
+                        disabled={!canCancel || acting}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 12,
+                          border: "1px solid rgba(255,255,255,0.35)",
+                          background: canCancel ? "#ff4d4f" : "rgba(255,255,255,0.18)",
+                          color: "#fff",
+                          fontWeight: 1000,
+                          cursor: canCancel && !acting ? "pointer" : "not-allowed",
+                          opacity: canCancel && !acting ? 1 : 0.6,
+                        }}
+                        title={!canCancel ? "48시간 전부터는 취소할 수 없어요." : "예약 취소"}
+                      >
+                        취소
+                      </button>
+                    ) : null}
                   </div>
+                );
+              }
 
-                  {isActiveReservationStatus(st.resv.status) ? (
-                    <button
-                      onClick={() => cancel(st.resv.id, st.resv.date, clampHHMM(st.resv.start_time))}
-                      disabled={!canCancel}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.35)",
-                        background: canCancel ? "#ff4d4f" : "rgba(255,255,255,0.18)",
-                        color: "#fff",
-                        fontWeight: 1000,
-                        cursor: canCancel ? "pointer" : "not-allowed",
-                        opacity: canCancel ? 1 : 0.6,
-                      }}
-                      title={!canCancel ? "48시간 전부터는 취소할 수 없어요." : "예약 취소"}
-                    >
-                      취소
-                    </button>
-                  ) : null}
-                </div>
+              return (
+                <button
+                  key={t}
+                  onClick={() => togglePick(t)}
+                  disabled={loading || acting}
+                  style={{
+                    ...baseCard,
+                    cursor: loading || acting ? "not-allowed" : "pointer",
+                    border: picked ? "2px solid #111" : baseCard.border,
+                    background: picked ? "#f3f5f7" : "#fff",
+                    opacity: loading || acting ? 0.65 : 1,
+                  }}
+                  title="눌러서 선택"
+                >
+                  <div style={{ fontWeight: 1100, color: "#111" }}>{t}</div>
+                  <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.85 }}>
+                    {picked ? "선택됨" : "예약 가능"}
+                  </div>
+                </button>
               );
-            }
+            })}
+          </div>
+        )}
 
-            return (
-              <button
-                key={t}
-                onClick={() => togglePick(t)}
-                style={{
-                  ...baseCard,
-                  cursor: "pointer",
-                  border: picked ? "2px solid #111" : baseCard.border,
-                  background: picked ? "#f3f5f7" : "#fff",
-                }}
-                title="눌러서 선택"
-              >
-                <div style={{ fontWeight: 1100, color: "#111" }}>{t}</div>
-                <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.85 }}>
-                  {picked ? "선택됨" : "예약 가능"}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {pickedTimes.length > 0 && (
+        {pickedTimes.length > 0 && !loading && (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", marginBottom: 8 }}>
               선택: <b style={{ color: "#111" }}>{pickedTimes.join(", ")}</b> (총 {pickedTimes.length}시간)
             </div>
-            <button onClick={reserve} style={{ ...btnPrimary(), width: "100%", padding: "14px 12px", borderRadius: 16 }}>
+            <button
+              onClick={reserve}
+              disabled={acting}
+              style={{
+                ...btnPrimary(),
+                width: "100%",
+                padding: "14px 12px",
+                borderRadius: 16,
+                opacity: acting ? 0.65 : 1,
+                cursor: acting ? "not-allowed" : "pointer",
+              }}
+            >
               신청하기 (관리자 승인 후 확정)
             </button>
           </div>
@@ -1091,6 +1243,20 @@ export default function PracticeStudentPage() {
           {toast.msg}
         </div>
       )}
+
+      <style jsx global>{`
+        @keyframes practicePulse {
+          0% {
+            opacity: 0.55;
+          }
+          50% {
+            opacity: 1;
+          }
+          100% {
+            opacity: 0.55;
+          }
+        }
+      `}</style>
     </div>
   );
 }

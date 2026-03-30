@@ -40,7 +40,7 @@ type AvailabilityRow = {
 type PracticeRow = {
   id: string;
   room_id: string | null;
-  room_name: string;
+  room_name: string | null;
 
   date: string;
   start_time: string | null;
@@ -49,8 +49,15 @@ type PracticeRow = {
   start_ts: string | null;
   end_ts: string | null;
 
+  status?: string;
+  voucher_id?: string | null;
+  class_id?: string | null;
+
   student_id: string | null;
-  student_name: string;
+  student_name: string | null;
+
+  reservation_kind?: string | null;
+  admin_block_reason?: string | null;
 };
 
 type SimpleTeacher = { id: string; name: string };
@@ -86,7 +93,7 @@ function minutesOf(t: string) {
   const [h, m] = hhmm.split(":").map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
 }
-const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"];
+const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 function normalizeRoom(roomName: string | null | undefined): "A" | "B" | "C" {
   const s = String(roomName ?? "").trim().toUpperCase();
@@ -177,18 +184,26 @@ export default function AdminLessonsHallSheetPage() {
   const [practice, setPractice] = useState<PracticeRow[]>([]);
 
   const [selectedLessonId, setSelectedLessonId] = useState("");
+  const [selectedPracticeId, setSelectedPracticeId] = useState("");
+
   const selectedLesson = useMemo(
     () => lessons.find((l) => l.id === selectedLessonId) ?? null,
     [lessons, selectedLessonId]
   );
 
-  const [selectedPracticeId, setSelectedPracticeId] = useState("");
   const selectedPractice = useMemo(
     () => practice.find((p) => p.id === selectedPracticeId) ?? null,
     [practice, selectedPracticeId]
   );
 
-const [practiceCanceling, setPracticeCanceling] = useState(false);
+  function normalizeReservationKind(v?: string | null) {
+    const s = String(v ?? "").trim().toUpperCase();
+    if (s === "ADMIN_BLOCK" || s === "ADMIN-BLOCK" || s === "BLOCK") return "ADMIN_BLOCK";
+    return "STUDENT";
+  }
+  
+  const selectedPracticeIsAdminBlock =
+    normalizeReservationKind(selectedPractice?.reservation_kind) === "ADMIN_BLOCK";
 
   const [selectedDow, setSelectedDow] = useState<number | null>(null);
   const [hoverTime, setHoverTime] = useState<string>("");
@@ -208,6 +223,16 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
   const [feStatus, setFeStatus] = useState<string>(STATUS_ADMIN_CHANGED);
   const [feReason, setFeReason] = useState<string>("");
 
+  const [practiceCanceling, setPracticeCanceling] = useState(false);
+
+  // 운영 차단 생성 모달
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [blockSaving, setBlockSaving] = useState(false);
+  const [blockDate, setBlockDate] = useState("");
+  const [blockTime, setBlockTime] = useState("13:00");
+  const [blockRoomId, setBlockRoomId] = useState("");
+  const [blockReason, setBlockReason] = useState("");
+
   const isCancelMode = feStatus === STATUS_CANCELED;
 
   const week = useMemo(() => {
@@ -221,9 +246,10 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
     const qs = new URLSearchParams();
     qs.set("from", week.from);
     qs.set("to", week.to);
-
+  
     const res = await authFetch(`/api/admin/lessons?${qs.toString()}`);
     const data = await res.json().catch(() => ({}));
+  
     if (!res.ok) {
       alert(data.error ?? "레슨 현황 조회 실패");
       setLessons([]);
@@ -232,12 +258,39 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
       setLoading(false);
       return;
     }
-
+  
     setLessons((data.lessons ?? data.rows ?? []) as LessonRow[]);
     setAvailability((data.availability ?? []) as AvailabilityRow[]);
-    setPractice((data.practice_reservations ?? []) as PracticeRow[]);
+  
+    const normalizedPractice: PracticeRow[] = ((data.practice_reservations ?? []) as any[]).map((p) => {
+      const kind = normalizeReservationKind(p.reservation_kind);
+  
+      return {
+        id: String(p.id),
+        room_id: p.room_id ?? null,
+        room_name: p.room_name ?? p.room?.name ?? null,
+        date: p.date,
+        start_time: p.start_time ? clampHHMM(p.start_time) : null,
+        end_time: p.end_time ? clampHHMM(p.end_time) : null,
+        start_ts: p.start_ts ?? null,
+        end_ts: p.end_ts ?? null,
+        status: p.status ?? undefined,
+        voucher_id: p.voucher_id ?? null,
+        class_id: p.class_id ?? null,
+        student_id: p.student_id ?? null,
+        student_name:
+          kind === "ADMIN_BLOCK"
+            ? "운영차단"
+            : p.student_name ?? p.student?.name ?? "연습실예약",
+        reservation_kind: kind,
+        admin_block_reason: p.admin_block_reason ?? null,
+      };
+    });
+  
+    setPractice(normalizedPractice);
     setLoading(false);
   }, [week.from, week.to]);
+
 
   useEffect(() => {
     load();
@@ -270,6 +323,107 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
     setTeachersAll((json.teachers ?? []) as SimpleTeacher[]);
     setRoomsAll((json.rooms ?? []) as SimpleRoom[]);
     setMetaLoading(false);
+  };
+
+  useEffect(() => {
+    if (blockModalOpen && roomsAll.length === 0) {
+      loadMeta();
+    }
+  }, [blockModalOpen, roomsAll.length]);
+
+  const getRoomIdByLetter = useCallback(
+    (roomLetter: "A" | "B" | "C") => {
+      const found = roomsAll.find((r) => normalizeRoom(r.name) === roomLetter);
+      return found?.id ?? "";
+    },
+    [roomsAll]
+  );
+
+  const openBlockModal = async (preset?: {
+    date?: string;
+    time?: string;
+    roomName?: string | null;
+    roomId?: string | null;
+  }) => {
+    if (roomsAll.length === 0) {
+      await loadMeta();
+    }
+
+    const presetDate = preset?.date ?? week.from;
+    const presetTime = preset?.time ? clampHHMM(preset.time) : "13:00";
+
+    let presetRoomId = preset?.roomId ?? "";
+    if (!presetRoomId && preset?.roomName) {
+      const letter = normalizeRoom(preset.roomName);
+      presetRoomId = getRoomIdByLetter(letter);
+    }
+
+    setBlockDate(presetDate);
+    setBlockTime(presetTime || "13:00");
+    setBlockRoomId(presetRoomId || getRoomIdByLetter("A"));
+    setBlockReason("");
+    setBlockModalOpen(true);
+  };
+
+  const saveBlock = async () => {
+    if (!blockDate || !blockTime || !blockRoomId) {
+      alert("날짜/시간/룸은 필수야.");
+      return;
+    }
+
+    setBlockSaving(true);
+
+    const res = await authFetch("/api/admin/practice-block", {
+      method: "POST",
+      body: JSON.stringify({
+        date: blockDate,
+        time: blockTime,
+        room_id: blockRoomId,
+        reason: blockReason || null,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(json.error ?? "운영 차단 생성 실패");
+      setBlockSaving(false);
+      return;
+    }
+
+    alert("운영 차단 완료");
+    setBlockModalOpen(false);
+    setBlockSaving(false);
+    setSelectedPracticeId("");
+    await load();
+  };
+
+  const cancelAdminBlock = async () => {
+    if (!selectedPractice) return;
+    const ok = confirm("운영 차단을 해제할까요?");
+    if (!ok) return;
+
+    setPracticeCanceling(true);
+
+    const res = await authFetch(`/api/admin/practice-block/${selectedPractice.id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({
+        reason: "관리자 해제",
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(json.error ?? "운영 차단 해제 실패");
+      setPracticeCanceling(false);
+      return;
+    }
+
+    alert("운영 차단 해제 완료");
+    setPracticeCanceling(false);
+    setSelectedPracticeId("");
+    await load();
   };
 
   const openForceEdit = async () => {
@@ -354,34 +508,30 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
 
   const cancelPracticeReservation = async () => {
     if (!selectedPractice) return;
-  
-    const ok = confirm(
-      `${selectedPractice.date} ${clampHHMM(selectedPractice.start_time ?? "")}-${clampHHMM(
-        selectedPractice.end_time ?? ""
-      )} ${normalizeRoom(selectedPractice.room_name)}홀\n${selectedPractice.student_name} 연습실 예약을 취소할까?`
-    );
+
+    const ok = confirm("연습실 예약을 취소할까요?");
     if (!ok) return;
-  
+
     setPracticeCanceling(true);
-  
+
     const res = await authFetch(`/api/admin/practice-reservations/${selectedPractice.id}/cancel`, {
       method: "POST",
       body: JSON.stringify({
         reason: "관리자 취소",
       }),
     });
-  
+
     const json = await res.json().catch(() => ({}));
-  
+
     if (!res.ok) {
       alert(json.error ?? "연습실 예약 취소 실패");
       setPracticeCanceling(false);
       return;
     }
-  
+
     alert("연습실 예약 취소 완료");
-    setSelectedPracticeId("");
     setPracticeCanceling(false);
+    setSelectedPracticeId("");
     await load();
   };
 
@@ -410,6 +560,16 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
       }
     });
 
+    practice.forEach((p) => {
+      if (!p.start_time || !p.end_time) return;
+      const st = minutesOf(p.start_time);
+      const ed = minutesOf(p.end_time);
+      if (Number.isFinite(st) && Number.isFinite(ed)) {
+        mins.push(st);
+        maxs.push(ed);
+      }
+    });
+
     if (mins.length > 0 && maxs.length > 0) {
       minM = Math.min(...mins);
       maxM = Math.max(...maxs);
@@ -424,7 +584,7 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
     }
 
     return { minM, maxM };
-  }, [lessons, availability]);
+  }, [lessons, availability, practice]);
 
   const slotTimes = useMemo(() => {
     const arr: string[] = [];
@@ -444,8 +604,6 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
     return out;
   }, [week.days]);
 
-  // ✅ 모바일에서도 전체 요일을 다 그린다.
-  // selectedDow는 "강조/이동" 용도로만 사용.
   const displayCols = cols;
 
   const lessonsBySlot = useMemo(() => {
@@ -460,13 +618,24 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
     return m;
   }, [lessons]);
 
+  const roomNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    roomsAll.forEach((r) => m.set(r.id, r.name));
+    return m;
+  }, [roomsAll]);
+  
+  function getPracticeRoomNorm(p: PracticeRow): "A" | "B" | "C" {
+    const roomName = p.room_name ?? (p.room_id ? roomNameById.get(p.room_id) : null) ?? "";
+    return normalizeRoom(roomName);
+  }
+
   const practiceBySlot = useMemo(() => {
     const m = new Map<string, PracticeRow[]>();
 
     for (const p of practice) {
       if (!p.date || !p.start_time || !p.end_time) continue;
 
-      const roomNorm = normalizeRoom(p.room_name);
+      const roomNorm = getPracticeRoomNorm(p);
       const stM = minutesOf(p.start_time);
       const edM = minutesOf(p.end_time);
 
@@ -818,8 +987,25 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
             새로고침
           </button>
 
+          <button
+            onClick={() => openBlockModal()}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #dc2626",
+              background: "#dc2626",
+              color: "#fff",
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            🚫 운영 차단
+          </button>
+
           <div style={{ marginLeft: "auto", color: "#666", fontSize: 13, width: "100%" }}>
-            {loading ? "불러오는 중..." : `레슨 ${lessons.length}개 · 강사 ${legendTeachers.length}명`}
+            {loading
+              ? "불러오는 중..."
+              : `레슨 ${lessons.length}개 · 연습실 ${practice.length}개 · 강사 ${legendTeachers.length}명`}
           </div>
 
           <div
@@ -956,9 +1142,7 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
                 }}
               >
                 <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
-                  {isMobile
-                    ? "모바일에서는 전체 요일이 가로 스크롤로 보이고, 요일 버튼 누르면 해당 날짜로 이동해요."
-                    : "요일 선택하면 근무 도트가 그 요일 기준으로 표시돼요."}
+                  주황: 연습실 예약 / 빨강: 운영차단 / 모바일은 전체 요일이 가로 스크롤로 보이고, 요일 버튼 누르면 해당 날짜로 이동해요.
                 </div>
               </div>
             </>
@@ -1281,7 +1465,13 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
 
               return list.map((p) => {
                 const isSelected = selectedPracticeId === p.id;
-              
+                const isAdminBlock = normalizeReservationKind(p.reservation_kind) === "ADMIN_BLOCK";
+                const blockLabel = isAdminBlock ? "운영차단" : (p.student_name ?? "연습실예약");
+                const blockBg = isAdminBlock ? "#ef4444" : "#f97316";
+                const blockTitle = isAdminBlock
+                  ? `${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${roomNorm}홀\n운영차단${p.admin_block_reason ? `\n사유: ${p.admin_block_reason}` : ""}`
+                  : `${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${roomNorm}홀\n${p.student_name} (연습실)`;
+
                 return (
                   <button
                     key={`${p.id}-${key}`}
@@ -1296,7 +1486,7 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
                       margin: 4,
                       borderRadius: 10,
                       border: isSelected ? "2px solid #111" : "2px solid rgba(0,0,0,0.12)",
-                      background: "#f97316",
+                      background: blockBg,
                       color: "#fff",
                       padding: isMobile ? "4px 6px" : "6px 8px",
                       fontWeight: 900,
@@ -1312,9 +1502,9 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
                       textAlign: "left",
                       boxShadow: isSelected ? "0 6px 18px rgba(0,0,0,0.18)" : "none",
                     }}
-                    title={`${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""} · ${roomNorm}홀\n${p.student_name} (연습실)`}
+                    title={blockTitle}
                   >
-                    {p.student_name}
+                    {blockLabel}
                   </button>
                 );
               });
@@ -1474,9 +1664,9 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
           </div>
         </div>
 
-       <div style={{ marginTop: 12 }}>
-        {!selectedLesson && !selectedPractice ? (
-          <div style={{ color: "#666", fontSize: 13 }}>블록 클릭하면 상세가 보여요.</div>
+        <div style={{ marginTop: 12 }}>
+          {!selectedLesson && !selectedPractice ? (
+            <div style={{ color: "#666", fontSize: 13 }}>블록 클릭하면 상세가 보여요.</div>
           ) : selectedLesson ? (
             <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
               <div
@@ -1494,6 +1684,7 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
                 </b>
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+
                   <button
                     onClick={openForceEdit}
                     style={{
@@ -1556,76 +1747,116 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
                 </div>
               </div>
             </div>
-            ) : selectedPractice ? (
-              <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <b>
-                    {selectedPractice.date} {clampHHMM(selectedPractice.start_time ?? "")} ~{" "}
-                    {clampHHMM(selectedPractice.end_time ?? "")} ·{" "}
-                    {normalizeRoom(selectedPractice.room_name)}홀
-                  </b>
+          ) : selectedPractice ? (
+            <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <b>
+                  {selectedPractice.date} {clampHHMM(selectedPractice.start_time ?? "")} ~{" "}
+                  {clampHHMM(selectedPractice.end_time ?? "")} ·{" "}
+                  {normalizeRoom(selectedPractice.room_name)}홀
+                  {selectedPracticeIsAdminBlock ? " · 운영차단" : ""}
+                </b>
 
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {selectedPracticeIsAdminBlock ? (
                     <button
-                      onClick={cancelPracticeReservation}
+                      onClick={cancelAdminBlock}
                       disabled={practiceCanceling}
                       style={{
                         border: "1px solid #b91c1c",
-                        background: "#b91c1c",
-                        color: "#fff",
+                        background: "#fff5f5",
+                        color: "#b91c1c",
                         borderRadius: 10,
                         padding: "6px 10px",
-                        cursor: "pointer",
+                        cursor: practiceCanceling ? "not-allowed" : "pointer",
                         fontWeight: 900,
+                        opacity: practiceCanceling ? 0.7 : 1,
                       }}
                     >
-                      {practiceCanceling ? "취소 처리 중..." : "연습실 예약 취소"}
+                      {practiceCanceling ? "차단 해제 중..." : "운영 차단 해제"}
                     </button>
+                  ) : (
+                    <>
+                    
+                      <button
+                        onClick={cancelPracticeReservation}
+                        disabled={practiceCanceling}
+                        style={{
+                          border: "1px solid #b91c1c",
+                          background: "#fff5f5",
+                          color: "#b91c1c",
+                          borderRadius: 10,
+                          padding: "6px 10px",
+                          cursor: practiceCanceling ? "not-allowed" : "pointer",
+                          fontWeight: 900,
+                          opacity: practiceCanceling ? 0.7 : 1,
+                        }}
+                      >
+                        {practiceCanceling ? "취소 처리 중..." : "연습실 예약 취소"}
+                      </button>
+                    </>
+                  )}
 
-                    <button
-                      onClick={() => setSelectedPracticeId("")}
-                      style={{
-                        border: "1px solid #ddd",
-                        background: "#fff",
-                        borderRadius: 10,
-                        padding: "6px 10px",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                      }}
-                    >
-                      선택 해제
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => setSelectedPracticeId("")}
+                    style={{
+                      border: "1px solid #ddd",
+                      background: "#fff",
+                      borderRadius: 10,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                    }}
+                  >
+                    선택 해제
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 13 }}>
+                <div>
+                  유형: <b>{selectedPracticeIsAdminBlock ? "운영 차단" : "연습실 예약"}</b>
                 </div>
 
-                <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 13 }}>
+                {selectedPracticeIsAdminBlock ? (
                   <div>
-                    유형: <b>연습실 예약</b>
+                    사유: <b>{selectedPractice.admin_block_reason?.trim() || "-"}</b>
                   </div>
+                ) : (
                   <div>
                     수강생: <b>{selectedPractice.student_name}</b>
                   </div>
-                  <div>
-                    룸: <b>{selectedPractice.room_name || "-"}</b>
-                  </div>
-                  <div>
-                    시간:{" "}
-                    <b>
-                      {clampHHMM(selectedPractice.start_time ?? "")} ~ {clampHHMM(selectedPractice.end_time ?? "")}
-                    </b>
-                  </div>
+                )}
+
+                <div>
+                  상태: <b>{selectedPractice.status ?? "-"}</b>
                 </div>
+
+                <div>
+                  시간: <b>{clampHHMM(selectedPractice.start_time ?? "")} ~ {clampHHMM(selectedPractice.end_time ?? "")}</b>
+                </div>
+
+                <div>
+                  홀: <b>{normalizeRoom(selectedPractice.room_name)}홀</b>
+                </div>
+
+                {!selectedPracticeIsAdminBlock ? (
+                  <div>
+                    출처: <b>{selectedPractice.voucher_id ? "수강권/이용권" : "기타"}</b>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {forceEditOpen && selectedLesson && (
@@ -1827,6 +2058,180 @@ const [practiceCanceling, setPracticeCanceling] = useState(false);
                 }}
               >
                 {forceSaving ? "저장 중..." : isCancelMode ? "취소 처리" : "저장"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {blockModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 16,
+          }}
+          onClick={() => !blockSaving && setBlockModalOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(520px, 96vw)",
+              borderRadius: 14,
+              background: "#fff",
+              border: "1px solid #eee",
+              padding: 14,
+              boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 1100, fontSize: 14 }}>🚫 운영 차단 추가</div>
+              <button
+                onClick={() => setBlockModalOpen(false)}
+                disabled={blockSaving}
+                style={{
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  borderRadius: 10,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 12,
+                color: "#666",
+                fontWeight: 900,
+                lineHeight: "18px",
+              }}
+            >
+              선택한 날짜/시간/홀에 운영 차단을 생성해. 학생 예약과 동일하게 슬롯을 막아두는 용도야.
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>날짜</div>
+                <input
+                  type="date"
+                  value={blockDate}
+                  onChange={(e) => setBlockDate(e.target.value)}
+                  disabled={blockSaving}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontWeight: 900,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>시간</div>
+                <select
+                  value={blockTime}
+                  onChange={(e) => setBlockTime(e.target.value)}
+                  disabled={blockSaving}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontWeight: 900,
+                  }}
+                >
+                  {HOUR_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>홀</div>
+                <select
+                  value={blockRoomId}
+                  onChange={(e) => setBlockRoomId(e.target.value)}
+                  disabled={blockSaving || metaLoading}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontWeight: 900,
+                  }}
+                >
+                  <option value="">홀 선택</option>
+                  {roomsAll.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>사유</div>
+              <input
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                disabled={blockSaving}
+                placeholder="예: 장비 점검 / 외부 대관 / 운영상 차단"
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  fontWeight: 900,
+                }}
+              />
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setBlockModalOpen(false)}
+                disabled={blockSaving}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 1000,
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={saveBlock}
+                disabled={blockSaving}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #dc2626",
+                  background: "#dc2626",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 1100,
+                }}
+              >
+                {blockSaving ? "저장 중..." : "운영 차단 생성"}
               </button>
             </div>
           </div>
