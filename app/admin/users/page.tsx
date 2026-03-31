@@ -151,6 +151,31 @@ export default function AdminUsersPage() {
     await load();
   };
 
+  const resetPassword = async (id: string) => {
+    const ok = confirm(
+      "비밀번호를 000000으로 초기화하고, 다음 로그인 시 새 비밀번호를 설정하도록 할까요?"
+    );
+    if (!ok) return;
+  
+    const res = await authFetch("/api/admin/users/reset-password", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: id,
+        newPassword: "000000",
+      }),
+    });
+  
+    const data = await res.json().catch(() => ({}));
+  
+    if (!res.ok) {
+      alert(data.error ?? "비밀번호 초기화 실패");
+      return;
+    }
+  
+    alert("비밀번호가 000000으로 초기화되었습니다.");
+    await load();
+  };
+
   const filteredRows = useMemo(() => {
     let list = rows;
 
@@ -421,17 +446,28 @@ export default function AdminUsersPage() {
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => toggleActive(r.id, !r.is_active)}
-                        style={{
-                          ...ui.buttonSubtle,
-                          width: "100%",
-                          justifyContent: "center",
-                          fontWeight: 800,
-                        }}
-                      >
-                        {r.is_active ? "비활성화" : "활성화"}
-                      </button>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <button
+                          onClick={() => toggleActive(r.id, !r.is_active)}
+                          style={{ ...ui.buttonSubtle, width: "100%" }}
+                        >
+                          {r.is_active ? "비활성화" : "활성화"}
+                        </button>
+
+                        <button
+                          onClick={() => resetPassword(r.id)}
+                          style={{
+                            ...ui.buttonSubtle,
+                            width: "100%",
+                            background: "#111",
+                            color: "#fff",
+                            border: "1px solid #111",
+                            fontWeight: 800,
+                          }}
+                        >
+                          비밀번호 초기화
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -476,12 +512,26 @@ export default function AdminUsersPage() {
                           <td style={ui.td}>{r.deactivated_at ? r.deactivated_at.slice(0, 10) : "-"}</td>
 
                           <td style={ui.td}>
-                            <button
-                              onClick={() => toggleActive(r.id, !r.is_active)}
-                              style={ui.buttonSubtle}
-                            >
-                              {r.is_active ? "비활성화" : "활성화"}
-                            </button>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                onClick={() => toggleActive(r.id, !r.is_active)}
+                                style={ui.buttonSubtle}
+                              >
+                                {r.is_active ? "비활성화" : "활성화"}
+                              </button>
+
+                              <button
+                                onClick={() => resetPassword(r.id)}
+                                style={{
+                                  ...ui.buttonSubtle,
+                                  background: "#111",
+                                  color: "#fff",
+                                  border: "1px solid #111",
+                                }}
+                              >
+                                비번초기화
+                              </button>
+                            </div>
                           </td>
 
                           <td style={{ ...ui.td, fontSize: 12, color: "#555" }}>{r.id}</td>

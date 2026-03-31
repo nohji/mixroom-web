@@ -61,7 +61,9 @@ type DeviceType = "controller" | "turntable" | "both";
 export async function GET(req: Request) {
   try {
     const guard = await requireAdmin();
-    if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
+    if (!guard.ok) {
+      return NextResponse.json({ error: guard.error }, { status: guard.status });
+    }
 
     const url = new URL(req.url);
     const from = url.searchParams.get("from") ?? todayStr();
@@ -102,7 +104,9 @@ export async function GET(req: Request) {
     if (teacherId) lessonQ = lessonQ.eq("teacher_id", teacherId);
 
     const { data: lessonData, error: lessonErr } = await lessonQ;
-    if (lessonErr) return NextResponse.json({ error: lessonErr.message }, { status: 500 });
+    if (lessonErr) {
+      return NextResponse.json({ error: lessonErr.message }, { status: 500 });
+    }
 
     const lessonRowsRaw: any[] = lessonData ?? [];
 
@@ -160,7 +164,9 @@ export async function GET(req: Request) {
     if (roomId) practiceQ = practiceQ.eq("room_id", roomId);
 
     const { data: practiceData, error: practiceErr } = await practiceQ;
-    if (practiceErr) return NextResponse.json({ error: practiceErr.message }, { status: 500 });
+    if (practiceErr) {
+      return NextResponse.json({ error: practiceErr.message }, { status: 500 });
+    }
 
     const practiceRowsRaw: any[] = practiceData ?? [];
 
@@ -185,15 +191,20 @@ export async function GET(req: Request) {
         .select("teacher_id")
         .eq("is_active", true);
 
-      if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 });
+      if (tErr) {
+        return NextResponse.json({ error: tErr.message }, { status: 500 });
+      }
 
-      targetTeacherIds = Array.from(new Set((tRows ?? []).map((x: any) => String(x.teacher_id))));
+      targetTeacherIds = Array.from(
+        new Set((tRows ?? []).map((x: any) => String(x.teacher_id)))
+      );
     }
 
     /* ---------------------------------
-     * 3) profiles name map
+     * 3) profiles name/color map
      * --------------------------------- */
     const nameMap = new Map<string, string>();
+    const colorMap = new Map<string, string | null>();
     const allProfileIds = Array.from(
       new Set([...teacherIdsFromLessons, ...studentIds, ...targetTeacherIds])
     );
@@ -201,11 +212,18 @@ export async function GET(req: Request) {
     if (allProfileIds.length > 0) {
       const { data: profs, error: pErr } = await supabaseServer
         .from("profiles")
-        .select("id, name")
+        .select("id, name, lesson_color")
         .in("id", allProfileIds);
 
-      if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
-      (profs ?? []).forEach((p: any) => nameMap.set(String(p.id), p.name ?? "알 수 없음"));
+      if (pErr) {
+        return NextResponse.json({ error: pErr.message }, { status: 500 });
+      }
+
+      (profs ?? []).forEach((p: any) => {
+        const id = String(p.id);
+        nameMap.set(id, p.name ?? "알 수 없음");
+        colorMap.set(id, p.lesson_color ?? null);
+      });
     }
 
     /* ---------------------------------
@@ -219,8 +237,13 @@ export async function GET(req: Request) {
         .select("id, name")
         .in("id", roomIdList);
 
-      if (rErr) return NextResponse.json({ error: rErr.message }, { status: 500 });
-      (rooms ?? []).forEach((rm: any) => roomMap.set(String(rm.id), rm.name ?? String(rm.id)));
+      if (rErr) {
+        return NextResponse.json({ error: rErr.message }, { status: 500 });
+      }
+
+      (rooms ?? []).forEach((rm: any) => {
+        roomMap.set(String(rm.id), rm.name ?? String(rm.id));
+      });
     }
 
     /* ---------------------------------
@@ -237,7 +260,9 @@ export async function GET(req: Request) {
         .order("lesson_date", { ascending: true })
         .order("lesson_time", { ascending: true });
 
-      if (allErr) return NextResponse.json({ error: allErr.message }, { status: 500 });
+      if (allErr) {
+        return NextResponse.json({ error: allErr.message }, { status: 500 });
+      }
 
       const byClass = new Map<string, any[]>();
       (allLessons ?? []).forEach((r: any) => {
@@ -282,6 +307,7 @@ export async function GET(req: Request) {
 
         teacher_id: tId,
         teacher_name: tId ? nameMap.get(tId) ?? "알 수 없음" : "미지정",
+        teacher_color: tId ? colorMap.get(tId) ?? null : null,
 
         student_id: sId,
         student_name: sId ? nameMap.get(sId) ?? "알 수 없음" : "알 수 없음",
@@ -301,7 +327,9 @@ export async function GET(req: Request) {
       };
     });
 
-    if (roomId) lessons = lessons.filter((l) => l.room_id === roomId);
+    if (roomId) {
+      lessons = lessons.filter((l) => l.room_id === roomId);
+    }
 
     /* ---------------------------------
      * 6.1) Practice reservations (frontend-friendly)
@@ -315,12 +343,12 @@ export async function GET(req: Request) {
 
       const studentId = c?.student_id ? String(c.student_id) : null;
 
-      const ymd = String(r.date ?? "");
+      const dateStr = String(r.date ?? "");
       const st = String(r.start_time ?? "");
       const et = String(r.end_time ?? "");
 
-      const start_ts = ymd && st ? `${ymd}T${st}:00` : null;
-      const end_ts = ymd && et ? `${ymd}T${et}:00` : null;
+      const start_ts = dateStr && st ? `${dateStr}T${st}:00` : null;
+      const end_ts = dateStr && et ? `${dateStr}T${et}:00` : null;
 
       const reservationKind = normalizeReservationKind(r.reservation_kind);
       const isAdminBlock = reservationKind === "ADMIN_BLOCK";
@@ -330,7 +358,7 @@ export async function GET(req: Request) {
         room_id: rid,
         room_name: roomName,
 
-        date: ymd,
+        date: dateStr,
         start_time: st || null,
         end_time: et || null,
 
@@ -362,6 +390,7 @@ export async function GET(req: Request) {
     let availability: Array<{
       teacher_id: string;
       teacher_name: string;
+      teacher_color: string | null;
       date: string;
       weekday: number;
       start_time: string;
@@ -387,7 +416,9 @@ export async function GET(req: Request) {
         .in("teacher_id", targetTeacherIds)
         .eq("is_active", true);
 
-      if (avErr) return NextResponse.json({ error: avErr.message }, { status: 500 });
+      if (avErr) {
+        return NextResponse.json({ error: avErr.message }, { status: 500 });
+      }
 
       const avRows: any[] = avData ?? [];
 
@@ -413,6 +444,7 @@ export async function GET(req: Request) {
           availability.push({
             teacher_id: tid,
             teacher_name: nameMap.get(tid) ?? "알 수 없음",
+            teacher_color: colorMap.get(tid) ?? null,
             date: ymdStr,
             weekday: wd,
             start_time: String(av.start_time),

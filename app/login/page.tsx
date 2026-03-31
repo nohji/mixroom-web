@@ -54,7 +54,7 @@ export default function LoginPage() {
       const phoneDigits = normalizePhone(phone);
 
       if (!phoneDigits) {
-        setMsg("휴대폰 번호를 입력해줘!");
+        setMsg("휴대폰 번호를 입력해주세요.");
         return;
       }
 
@@ -136,9 +136,7 @@ export default function LoginPage() {
                 if (e.key === "Enter" && !loading) onLogin();
               }}
             />
-            <span style={{ color: colors.textMuted, fontSize: 12 }}>
-              초기 비밀번호는 0000 (로그인 후 변경 권장)
-            </span>
+           
           </label>
 
           <button

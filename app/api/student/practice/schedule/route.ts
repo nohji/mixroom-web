@@ -32,47 +32,60 @@ export async function GET(req: Request) {
     daily_limit_hours: 2,
   };
 
-  // 1) room 목록
-  const { data: rooms, error: roomErr } = await supabaseServer
-    .from("practice_rooms")
-    .select("id, name")
-    .order("name", { ascending: true });
+  const studentUserId = guard.studentUserId;
+  const today = todayYmdKST();
+
+  // 1) 1차 병렬 조회
+  const [
+    { data: rooms, error: roomErr },
+    { data: rawLessons, error: lErr },
+    { data: rawResv, error: pErr },
+    { data: myClasses, error: cErr },
+    { data: grantRows, error: grantErr },
+  ] = await Promise.all([
+    supabaseServer.from("practice_rooms").select("id, name").order("name", { ascending: true }),
+
+    supabaseServer
+      .from("lessons")
+      .select("id, lesson_date, lesson_time, status, room_id")
+      .gte("lesson_date", from)
+      .lte("lesson_date", to)
+      .neq("status", "canceled"),
+
+    supabaseServer
+      .from("practice_reservations")
+      .select(
+        "id, student_id, room_id, date, start_time, end_time, status, created_at, voucher_id, rejected_reason, approved_at"
+      )
+      .gte("date", from)
+      .lte("date", to),
+
+    supabaseServer.from("classes").select("id").eq("student_id", studentUserId),
+
+    supabaseServer
+      .from("practice_credit_grants")
+      .select("grant_type, remaining_hours")
+      .eq("student_id", studentUserId),
+  ]);
 
   if (roomErr) return json({ error: roomErr.message }, 500);
+  if (lErr) return json({ error: lErr.message }, 500);
+  if (pErr) return json({ error: pErr.message }, 500);
+  if (cErr) return json({ error: cErr.message }, 500);
+  if (grantErr) return json({ error: grantErr.message }, 500);
 
   const roomNameById = new Map<string, string>();
   (rooms ?? []).forEach((r: any) => {
     roomNameById.set(String(r.id), String(r.name));
   });
 
-  // 2) lessons (그리드 점유 체크용: 요청 범위만)
-  const { data: rawLessons, error: lErr } = await supabaseServer
-    .from("lessons")
-    .select("id, lesson_date, lesson_time, status, room_id")
-    .gte("lesson_date", from)
-    .lte("lesson_date", to)
-    .neq("status", "canceled");
-
-  if (lErr) return json({ error: lErr.message }, 500);
-
   const lessons = (rawLessons ?? []).map((l: any) => ({
     ...l,
     room_name: roomNameById.get(String(l.room_id)) ?? null,
   }));
 
-  // 3) reservations (그리드용: 요청 범위만)
-  const { data: rawResv, error: pErr } = await supabaseServer
-    .from("practice_reservations")
-    .select(
-      "id, student_id, room_id, date, start_time, end_time, status, created_at, voucher_id, rejected_reason, approved_at"
-    )
-    .gte("date", from)
-    .lte("date", to);
-
-  if (pErr) return json({ error: pErr.message }, 500);
-
   const reservations = (rawResv ?? []).map((r: any) => {
-    const isMine = String(r.student_id) === guard.studentUserId;
+    const isMine = String(r.student_id) === studentUserId;
     return {
       id: r.id,
       student_id: isMine ? r.student_id : null,
@@ -90,24 +103,7 @@ export async function GET(req: Request) {
     };
   });
 
-  // 4) 내 class 목록
-  const { data: myClasses, error: cErr } = await supabaseServer
-    .from("classes")
-    .select("id")
-    .eq("student_id", guard.studentUserId);
-
-  if (cErr) return json({ error: cErr.message }, 500);
-
   const classIds = (myClasses ?? []).map((x: any) => String(x.id)).filter(Boolean);
-  const today = todayYmdKST();
-
-  // 4-1) 추가 무료 / 유료 시간 집계 (remaining_hours 기준)
-  const { data: grantRows, error: grantErr } = await supabaseServer
-    .from("practice_credit_grants")
-    .select("grant_type, remaining_hours")
-    .eq("student_id", guard.studentUserId);
-
-  if (grantErr) return json({ error: grantErr.message }, 500);
 
   const extraFreeHours = (grantRows ?? [])
     .filter((x: any) => String(x.grant_type) === "ADMIN_ADD")
@@ -117,26 +113,10 @@ export async function GET(req: Request) {
     .filter((x: any) => String(x.grant_type) === "PURCHASE")
     .reduce((sum: number, x: any) => sum + Number(x.remaining_hours ?? 0), 0);
 
-  // 수강권 없을 때도 추가/유료 시간은 보여줌
-  if (classIds.length === 0) {
-    const baseRemainingHours = 0;
-    const totalRemainingHours = baseRemainingHours + extraFreeHours + paidHours;
-
-    const { data: myRawList, error: myListErr } = await supabaseServer
-      .from("practice_reservations")
-      .select(
-        "id, student_id, room_id, date, start_time, end_time, status, created_at, voucher_id, rejected_reason, approved_at"
-      )
-      .eq("student_id", guard.studentUserId)
-      .gte("date", from)
-      .lte("date", to)
-      .neq("status", "CANCELED")
-      .order("date", { ascending: true })
-      .order("start_time", { ascending: true });
-
-    if (myListErr) return json({ error: myListErr.message }, 500);
-
-    const my_reservations_in_voucher = (myRawList ?? []).map((r: any) => ({
+  // 내 예약 목록(현재 조회 범위 기준) 재사용
+  const myReservationsInRange = (rawResv ?? [])
+    .filter((r: any) => String(r.student_id) === studentUserId && String(r.status).toUpperCase() !== "CANCELED")
+    .map((r: any) => ({
       id: r.id,
       student_id: r.student_id,
       room_id: r.room_id,
@@ -151,14 +131,19 @@ export async function GET(req: Request) {
       created_at: r.created_at,
     }));
 
+  // 수강권 없을 때도 추가 무료 / 유료 시간은 보여줌
+  if (classIds.length === 0) {
+    const baseRemainingHours = 0;
+    const totalRemainingHours = baseRemainingHours + extraFreeHours + paidHours;
+
     return json({
       ok: true,
-      me: { student_id: guard.studentUserId },
+      me: { student_id: studentUserId },
       policy,
       rooms: rooms ?? [],
       lessons,
       reservations,
-      my_reservations_in_voucher,
+      my_reservations_in_voucher: myReservationsInRange,
       voucher_summary: {
         today,
         remaining_hours: baseRemainingHours,
@@ -180,7 +165,7 @@ export async function GET(req: Request) {
     });
   }
 
-  // 5) voucher 조회
+  // 2) voucher 조회
   const { data: vouchers, error: vErr } = await supabaseServer
     .from("practice_vouchers")
     .select("id, class_id, quantity, valid_from, valid_until")
@@ -209,9 +194,7 @@ export async function GET(req: Request) {
   let picked: any | null = null;
 
   if (activeOnes.length > 0) {
-    picked = activeOnes.sort((a, b) =>
-      String(a.valid_until).localeCompare(String(b.valid_until))
-    )[0];
+    picked = activeOnes.sort((a, b) => String(a.valid_until).localeCompare(String(b.valid_until)))[0];
   } else {
     const upcoming = vv
       .filter((v) => v.valid_from && v.valid_from > today)
@@ -249,46 +232,25 @@ export async function GET(req: Request) {
         active_voucher_ids: [],
       };
 
-  // 6) 상단 예약내역용
+  // 3) 상단 예약내역용
+  // 현재 조회범위의 내 예약을 재사용하되, voucher 기간 밖이면 필터
   let my_reservations_in_voucher: any[] = [];
 
   if (voucher_summary.usable_until) {
     const listFrom = voucher_summary.usable_from ?? voucher_summary.usable_until;
     const listTo = voucher_summary.usable_until;
 
-    const { data: myRawList, error: myListErr } = await supabaseServer
-      .from("practice_reservations")
-      .select(
-        "id, student_id, room_id, date, start_time, end_time, status, created_at, voucher_id, rejected_reason, approved_at"
-      )
-      .eq("student_id", guard.studentUserId)
-      .gte("date", listFrom)
-      .lte("date", listTo)
-      .neq("status", "CANCELED")
-      .order("date", { ascending: true })
-      .order("start_time", { ascending: true });
-
-    if (myListErr) return json({ error: myListErr.message }, 500);
-
-    my_reservations_in_voucher = (myRawList ?? []).map((r: any) => ({
-      id: r.id,
-      student_id: r.student_id,
-      room_id: r.room_id,
-      room_name: roomNameById.get(String(r.room_id)) ?? null,
-      date: r.date,
-      start_time: r.start_time,
-      end_time: r.end_time,
-      status: r.status,
-      voucher_id: r.voucher_id,
-      rejected_reason: r.rejected_reason ?? null,
-      approved_at: r.approved_at ?? null,
-      created_at: r.created_at,
-    }));
+    my_reservations_in_voucher = myReservationsInRange
+      .filter((r) => r.date >= listFrom && r.date <= listTo)
+      .sort((a, b) => {
+        if (a.date !== b.date) return String(a.date).localeCompare(String(b.date));
+        return String(a.start_time).localeCompare(String(b.start_time));
+      });
   }
 
   return json({
     ok: true,
-    me: { student_id: guard.studentUserId },
+    me: { student_id: studentUserId },
     policy,
     rooms: rooms ?? [],
     lessons,

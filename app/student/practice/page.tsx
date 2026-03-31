@@ -184,13 +184,16 @@ export default function PracticeStudentPage() {
 
   const [me, setMe] = useState<string>("");
   const [pickedTimes, setPickedTimes] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState(false);
 
   const [voucherSummary, setVoucherSummary] = useState<VoucherSummary | null>(null);
   const [policy, setPolicy] = useState<{ daily_limit_hours: number } | null>(null);
 
   const reservationListRef = useRef<HTMLDivElement | null>(null);
+  const lastLoadedAtRef = useRef(0);
 
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
   const showToast = useCallback((msg: string, kind: ToastKind = "ok") => {
@@ -305,28 +308,42 @@ export default function PracticeStudentPage() {
     setVoucherSummary((json.voucher_summary ?? null) as VoucherSummary | null);
     setPolicy(json.policy ?? null);
     setListVisibleCount(10);
+    lastLoadedAtRef.current = Date.now();
 
     return { ok: true as const };
   }, [weekFrom, weekTo, showToast]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      await loadWeek();
-    } finally {
-      setLoading(false);
-    }
-  }, [loadWeek]);
+  const load = useCallback(
+    async (mode: "initial" | "refresh" = "refresh") => {
+      if (mode === "initial") setInitialLoading(true);
+      else setRefreshing(true);
+
+      try {
+        await loadWeek();
+      } finally {
+        if (mode === "initial") setInitialLoading(false);
+        else setRefreshing(false);
+      }
+    },
+    [loadWeek]
+  );
 
   useEffect(() => {
-    load();
+    load("initial");
   }, [load]);
 
   useEffect(() => {
-    const onFocus = () => load();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") load();
+    const shouldRefresh = () => Date.now() - lastLoadedAtRef.current > 15000;
+
+    const onFocus = () => {
+      if (shouldRefresh()) load("refresh");
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && shouldRefresh()) {
+        load("refresh");
+      }
+    };
+
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -336,7 +353,7 @@ export default function PracticeStudentPage() {
   }, [load]);
 
   useEffect(() => {
-    const t = window.setInterval(() => load(), 10000);
+    const t = window.setInterval(() => load("refresh"), 30000);
     return () => window.clearInterval(t);
   }, [load]);
 
@@ -395,7 +412,7 @@ export default function PracticeStudentPage() {
   }
 
   const togglePick = (t: string) => {
-    if (loading || acting) return;
+    if (initialLoading || refreshing || acting) return;
 
     const st = slotStatus(selectedDate, t, selectedRoom);
     if (st.kind !== "free") return;
@@ -477,7 +494,7 @@ export default function PracticeStudentPage() {
 
       showToast("신청 완료! 관리자 승인 후 확정됩니다.", "ok");
       setPickedTimes([]);
-      await load();
+      await load("refresh");
 
       setTimeout(() => {
         reservationListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -512,14 +529,14 @@ export default function PracticeStudentPage() {
       }
 
       showToast("취소되었습니다.", "ok");
-      await load();
+      await load("refresh");
     } finally {
       setActing(false);
     }
   }
 
   const goPrevWeek = () => {
-    if (!canGoPrevWeek || loading || acting) return;
+    if (!canGoPrevWeek || initialLoading || refreshing || acting) return;
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() - 7);
     setWeekStart(ymd(startOfWeek(d)));
@@ -527,7 +544,7 @@ export default function PracticeStudentPage() {
   };
 
   const goNextWeek = () => {
-    if (!canGoNextWeek || loading || acting) return;
+    if (!canGoNextWeek || initialLoading || refreshing || acting) return;
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setWeekStart(ymd(startOfWeek(d)));
@@ -535,7 +552,7 @@ export default function PracticeStudentPage() {
   };
 
   const goThisWeek = () => {
-    if (loading || acting) return;
+    if (initialLoading || refreshing || acting) return;
     setWeekStart(ymd(startOfWeek(new Date())));
     setSelectedDate(reserveMinYmd);
     setPickedTimes([]);
@@ -552,7 +569,7 @@ export default function PracticeStudentPage() {
     return sortedVoucherReservations.slice(0, listVisibleCount);
   }, [sortedVoucherReservations, listVisibleCount]);
 
-  const overlayVisible = loading || acting;
+  const overlayVisible = initialLoading || acting;
   const overlayTitle = acting ? "처리 중이에요" : "연습실 정보를 불러오는 중이에요";
   const overlayDesc = acting
     ? "예약 또는 취소 요청을 처리하고 있어요"
@@ -636,7 +653,11 @@ export default function PracticeStudentPage() {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ fontWeight: 1000, fontSize: 20, color: "#111" }}>연습실 예약</div>
         <div style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, color: "#111" }}>
-          {loading ? "불러오는 중..." : `오늘 내 예약 ${myActiveCountToday}/2`}
+          {initialLoading
+            ? "불러오는 중..."
+            : refreshing
+            ? "새로고침 중..."
+            : `오늘 내 예약 ${myActiveCountToday}/2`}
         </div>
       </div>
 
@@ -645,20 +666,21 @@ export default function PracticeStudentPage() {
           marginTop: 8,
           padding: "10px 12px",
           borderRadius: 12,
-          background: loading ? "#111" : "#f3f4f6",
-          border: loading ? "1px solid #111" : "1px solid #d7dbe0",
-          color: loading ? "#fff" : "#111",
+          background: initialLoading ? "#111" : refreshing ? "#fff7ed" : "#f3f4f6",
+          border: initialLoading ? "1px solid #111" : refreshing ? "1px solid #fed7aa" : "1px solid #d7dbe0",
+          color: initialLoading ? "#fff" : "#111",
           fontWeight: 1000,
           fontSize: 12,
           lineHeight: "18px",
         }}
       >
-        {loading
+        {initialLoading
           ? "연습실 이용권, 예약 내역, 시간표를 불러오는 중입니다."
+          : refreshing
+          ? "최신 예약 상태를 확인하고 있어요."
           : "원하는 날짜와 홀을 선택한 뒤 가능한 시간대를 눌러 예약할 수 있어요."}
       </div>
 
-      {/* 예약 내역 상단 */}
       <div ref={reservationListRef} style={{ marginTop: 12 }}>
         <div style={{ fontWeight: 1100, fontSize: 16, color: "#111", marginBottom: 10 }}>
           📌 현재 수강권 예약 내역
@@ -680,12 +702,12 @@ export default function PracticeStudentPage() {
               </b>
             </div>
 
-            <button onClick={load} style={btnPrimary()} disabled={loading || acting}>
+            <button onClick={() => load("refresh")} style={btnPrimary()} disabled={initialLoading || refreshing || acting}>
               새로고침
             </button>
           </div>
 
-          {loading ? (
+          {initialLoading ? (
             <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
               {Array.from({ length: 3 }).map((_, i) => (
                 <div
@@ -826,7 +848,7 @@ export default function PracticeStudentPage() {
                     borderRadius: 14,
                     fontWeight: 1100,
                   }}
-                  disabled={loading || acting}
+                  disabled={initialLoading || refreshing || acting}
                 >
                   더보기 ({listVisibleCount}/{sortedVoucherReservations.length})
                 </button>
@@ -836,7 +858,6 @@ export default function PracticeStudentPage() {
         </div>
       </div>
 
-      {/* Voucher summary */}
       <div
         style={{
           marginTop: 12,
@@ -905,7 +926,6 @@ export default function PracticeStudentPage() {
         </div>
       </div>
 
-      {/* 예약 정책 안내 */}
       <div
         style={{
           marginTop: 12,
@@ -924,7 +944,6 @@ export default function PracticeStudentPage() {
         * 당일 및 다음날 예약은 불가하며, 최대 30일 뒤까지만 신청할 수 있어요.
       </div>
 
-      {/* Week controls */}
       <div
         style={{
           marginTop: 12,
@@ -937,26 +956,25 @@ export default function PracticeStudentPage() {
           gap: 10,
         }}
       >
-        <button onClick={goPrevWeek} style={btnGhost(!canGoPrevWeek)} disabled={!canGoPrevWeek || loading || acting}>
+        <button onClick={goPrevWeek} style={btnGhost(!canGoPrevWeek)} disabled={!canGoPrevWeek || initialLoading || refreshing || acting}>
           ◀
         </button>
         <div style={{ fontWeight: 1000, fontSize: 13, color: "#111" }}>
           {weekFrom} ~ {weekTo}
         </div>
-        <button onClick={goNextWeek} style={btnGhost(!canGoNextWeek)} disabled={!canGoNextWeek || loading || acting}>
+        <button onClick={goNextWeek} style={btnGhost(!canGoNextWeek)} disabled={!canGoNextWeek || initialLoading || refreshing || acting}>
           ▶
         </button>
 
-        <button onClick={goThisWeek} style={{ ...btnGhost(false), marginLeft: "auto" }} disabled={loading || acting}>
+        <button onClick={goThisWeek} style={{ ...btnGhost(false), marginLeft: "auto" }} disabled={initialLoading || refreshing || acting}>
           이번주
         </button>
 
-        <button onClick={load} style={btnPrimary()} disabled={loading || acting}>
+        <button onClick={() => load("refresh")} style={btnPrimary()} disabled={initialLoading || refreshing || acting}>
           새로고침
         </button>
       </div>
 
-      {/* Date selector */}
       <div style={{ marginTop: 14 }}>
         <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", marginBottom: 8 }}>날짜 선택</div>
 
@@ -968,14 +986,14 @@ export default function PracticeStudentPage() {
 
             const outOfVoucher = !inRangeDate(dateStr, voucherFrom, voucherTo);
             const outOfPolicy = !isPracticeReservableDate(dateStr);
-            const blocked = outOfVoucher || outOfPolicy || loading || acting;
+            const blocked = outOfVoucher || outOfPolicy || initialLoading || refreshing || acting;
             const opacity = blocked ? 0.55 : 1;
 
             return (
               <button
                 key={dateStr}
                 onClick={() => {
-                  if (loading || acting) return;
+                  if (initialLoading || refreshing || acting) return;
 
                   if (outOfPolicy) {
                     showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
@@ -1021,7 +1039,6 @@ export default function PracticeStudentPage() {
         </div>
       </div>
 
-      {/* Room tabs */}
       <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
         {ROOMS.map((r) => {
           const isSel = selectedRoom === r;
@@ -1029,7 +1046,7 @@ export default function PracticeStudentPage() {
             <button
               key={r}
               onClick={() => {
-                if (loading || acting) return;
+                if (initialLoading || refreshing || acting) return;
                 setSelectedRoom(r);
                 setPickedTimes([]);
               }}
@@ -1041,10 +1058,10 @@ export default function PracticeStudentPage() {
                 background: isSel ? "#111" : "#fff",
                 color: isSel ? "#fff" : "#111",
                 fontWeight: 1000,
-                cursor: loading || acting ? "not-allowed" : "pointer",
-                opacity: loading || acting ? 0.6 : 1,
+                cursor: initialLoading || refreshing || acting ? "not-allowed" : "pointer",
+                opacity: initialLoading || refreshing || acting ? 0.6 : 1,
               }}
-              disabled={loading || acting}
+              disabled={initialLoading || refreshing || acting}
             >
               {r}홀
             </button>
@@ -1052,13 +1069,12 @@ export default function PracticeStudentPage() {
         })}
       </div>
 
-      {/* Time list */}
       <div style={{ marginTop: 14 }}>
         <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", marginBottom: 8 }}>
           시간 선택 (하루 최대 2시간 · 연속/비연속 가능)
         </div>
 
-        {loading ? (
+        {initialLoading ? (
           <div style={{ display: "grid", gap: 10 }}>
             {Array.from({ length: 6 }).map((_, i) => (
               <div
@@ -1177,13 +1193,13 @@ export default function PracticeStudentPage() {
                 <button
                   key={t}
                   onClick={() => togglePick(t)}
-                  disabled={loading || acting}
+                  disabled={initialLoading || refreshing || acting}
                   style={{
                     ...baseCard,
-                    cursor: loading || acting ? "not-allowed" : "pointer",
+                    cursor: initialLoading || refreshing || acting ? "not-allowed" : "pointer",
                     border: picked ? "2px solid #111" : baseCard.border,
                     background: picked ? "#f3f5f7" : "#fff",
-                    opacity: loading || acting ? 0.65 : 1,
+                    opacity: initialLoading || refreshing || acting ? 0.65 : 1,
                   }}
                   title="눌러서 선택"
                 >
@@ -1197,7 +1213,7 @@ export default function PracticeStudentPage() {
           </div>
         )}
 
-        {pickedTimes.length > 0 && !loading && (
+        {pickedTimes.length > 0 && !initialLoading && (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", marginBottom: 8 }}>
               선택: <b style={{ color: "#111" }}>{pickedTimes.join(", ")}</b> (총 {pickedTimes.length}시간)
@@ -1222,7 +1238,6 @@ export default function PracticeStudentPage() {
 
       <div style={{ height: 30 }} />
 
-      {/* Toast */}
       {toast && (
         <div
           style={{

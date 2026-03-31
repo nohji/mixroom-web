@@ -13,6 +13,8 @@ type LessonRow = {
 
   teacher_id: string | null;
   teacher_name: string;
+  teacher_color: string | null;
+
   student_id: string | null;
   student_name: string;
 
@@ -30,6 +32,7 @@ type LessonRow = {
 type AvailabilityRow = {
   teacher_id: string;
   teacher_name: string;
+  teacher_color: string | null;
   date: string;
   weekday: number;
   start_time: string;
@@ -60,7 +63,12 @@ type PracticeRow = {
   admin_block_reason?: string | null;
 };
 
-type SimpleTeacher = { id: string; name: string };
+type SimpleTeacher = {
+  id: string;
+  name: string;
+  teacher_color: string | null;
+};
+
 type SimpleRoom = { id: string; name: string };
 
 function pad2(n: number) {
@@ -108,17 +116,21 @@ function slotKey(date: string, time: string, roomNorm: "A" | "B" | "C") {
   return `${date}|${clampHHMM(time)}|${roomNorm}`;
 }
 
-const teacherColorMap: Record<string, string> = {};
-
 function fallbackColorFromKey(key: string) {
   let hash = 0;
   for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
   const hue = hash % 360;
   return `hsl(${hue} 70% 45%)`;
 }
-function pickTeacherColor(teacherId: string | null, teacherName: string) {
+
+function pickTeacherColor(
+  teacherId: string | null,
+  teacherName: string,
+  teacherColor?: string | null
+) {
+  if (teacherColor && teacherColor.trim()) return teacherColor;
   const k = teacherId ?? teacherName;
-  return teacherColorMap[k] ?? fallbackColorFromKey(k);
+  return fallbackColorFromKey(k);
 }
 
 function deviceLabel(d: LessonRow["device_type"]) {
@@ -201,7 +213,7 @@ export default function AdminLessonsHallSheetPage() {
     if (s === "ADMIN_BLOCK" || s === "ADMIN-BLOCK" || s === "BLOCK") return "ADMIN_BLOCK";
     return "STUDENT";
   }
-  
+
   const selectedPracticeIsAdminBlock =
     normalizeReservationKind(selectedPractice?.reservation_kind) === "ADMIN_BLOCK";
 
@@ -225,7 +237,6 @@ export default function AdminLessonsHallSheetPage() {
 
   const [practiceCanceling, setPracticeCanceling] = useState(false);
 
-  // 운영 차단 생성 모달
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockSaving, setBlockSaving] = useState(false);
   const [blockDate, setBlockDate] = useState("");
@@ -246,10 +257,10 @@ export default function AdminLessonsHallSheetPage() {
     const qs = new URLSearchParams();
     qs.set("from", week.from);
     qs.set("to", week.to);
-  
+
     const res = await authFetch(`/api/admin/lessons?${qs.toString()}`);
     const data = await res.json().catch(() => ({}));
-  
+
     if (!res.ok) {
       alert(data.error ?? "레슨 현황 조회 실패");
       setLessons([]);
@@ -258,13 +269,13 @@ export default function AdminLessonsHallSheetPage() {
       setLoading(false);
       return;
     }
-  
+
     setLessons((data.lessons ?? data.rows ?? []) as LessonRow[]);
     setAvailability((data.availability ?? []) as AvailabilityRow[]);
-  
+
     const normalizedPractice: PracticeRow[] = ((data.practice_reservations ?? []) as any[]).map((p) => {
       const kind = normalizeReservationKind(p.reservation_kind);
-  
+
       return {
         id: String(p.id),
         room_id: p.room_id ?? null,
@@ -286,11 +297,10 @@ export default function AdminLessonsHallSheetPage() {
         admin_block_reason: p.admin_block_reason ?? null,
       };
     });
-  
+
     setPractice(normalizedPractice);
     setLoading(false);
   }, [week.from, week.to]);
-
 
   useEffect(() => {
     load();
@@ -623,7 +633,7 @@ export default function AdminLessonsHallSheetPage() {
     roomsAll.forEach((r) => m.set(r.id, r.name));
     return m;
   }, [roomsAll]);
-  
+
   function getPracticeRoomNorm(p: PracticeRow): "A" | "B" | "C" {
     const roomName = p.room_name ?? (p.room_id ? roomNameById.get(p.room_id) : null) ?? "";
     return normalizeRoom(roomName);
@@ -712,14 +722,27 @@ export default function AdminLessonsHallSheetPage() {
       seen.set(id, {
         id,
         name,
-        color: pickTeacherColor(id, name),
+        color: pickTeacherColor(id, name, a.teacher_color),
+      });
+    });
+
+    teachersAll.forEach((t) => {
+      const id = String(t.id);
+      const name = String(t.name ?? "알 수 없음");
+      if (!id) return;
+      if (seen.has(id)) return;
+
+      seen.set(id, {
+        id,
+        name,
+        color: pickTeacherColor(id, name, t.teacher_color),
       });
     });
 
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [availability]);
+  }, [availability, teachersAll]);
 
-  type AvailTeacher = { id: string; name: string };
+  type AvailTeacher = { id: string; name: string; teacher_color: string | null };
   type AvailDetail = AvailTeacher & { ranges: { start: string; end: string }[] };
 
   const availByTimeForSelectedDow = useMemo(() => {
@@ -742,9 +765,11 @@ export default function AdminLessonsHallSheetPage() {
       const cur = detailByTeacherId.get(id) ?? {
         id,
         name,
+        teacher_color: a.teacher_color ?? null,
         ranges: [] as { start: string; end: string }[],
       };
       cur.name = name;
+      cur.teacher_color = a.teacher_color ?? cur.teacher_color ?? null;
       cur.ranges.push({ start, end });
       detailByTeacherId.set(id, cur);
     });
@@ -775,12 +800,13 @@ export default function AdminLessonsHallSheetPage() {
       const ed = minutesOf(clampHHMM(a.end_time));
       const id = String(a.teacher_id);
       const name = String(a.teacher_name ?? "알 수 없음");
+      const teacher_color = a.teacher_color ?? null;
 
       slotTimes.forEach((t) => {
         const m = minutesOf(t);
         if (m >= st && m < ed) {
           const m2 = map.get(t) ?? new Map<string, AvailTeacher>();
-          m2.set(id, { id, name });
+          m2.set(id, { id, name, teacher_color });
           map.set(t, m2);
         }
       });
@@ -797,7 +823,7 @@ export default function AdminLessonsHallSheetPage() {
     return { byTime, detailByTeacherId };
   }, [availability, slotTimes, selectedDow]);
 
-  const renderAvailDots = (teachers: { id: string; name: string }[]) => {
+  const renderAvailDots = (teachers: AvailTeacher[]) => {
     if (!teachers || teachers.length === 0) return null;
     const top = teachers.slice(0, 3);
 
@@ -810,7 +836,7 @@ export default function AdminLessonsHallSheetPage() {
               width: 7,
               height: 7,
               borderRadius: 999,
-              background: pickTeacherColor(t.id, t.name),
+              background: pickTeacherColor(t.id, t.name, t.teacher_color),
               border: "1px solid rgba(0,0,0,0.18)",
               display: "inline-block",
               opacity: 0.26,
@@ -1398,7 +1424,7 @@ export default function AdminLessonsHallSheetPage() {
                                       width: 10,
                                       height: 10,
                                       borderRadius: 999,
-                                      background: pickTeacherColor(x.id, x.name),
+                                      background: pickTeacherColor(x.id, x.name, x.teacher_color),
                                       border: "1px solid rgba(0,0,0,0.15)",
                                       display: "inline-block",
                                       opacity: 0.26,
@@ -1512,8 +1538,7 @@ export default function AdminLessonsHallSheetPage() {
 
             {placedLessons.map((l) => {
               const isSelected = selectedLessonId === l.id;
-              const teacherColor = pickTeacherColor(l.teacher_id, l.teacher_name);
-
+              const teacherColor = pickTeacherColor(l.teacher_id, l.teacher_name, l.teacher_color);
               const mainIsCanceled = String(l.status ?? "") === STATUS_CANCELED;
               const bg = mainIsCanceled ? "rgba(0,0,0,0.08)" : teacherColor;
 
@@ -1655,7 +1680,7 @@ export default function AdminLessonsHallSheetPage() {
                         <span style={{ fontWeight: 1000, color: "#111" }}>{l.student_name}</span>
                       </>
                     ) : (
-                      l.student_name
+                      <span style={{ fontWeight: 1000, color: "#111" }}>{l.student_name}</span>
                     )}
                   </div>
                 </button>
@@ -1684,7 +1709,6 @@ export default function AdminLessonsHallSheetPage() {
                 </b>
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-
                   <button
                     onClick={openForceEdit}
                     style={{
@@ -1784,25 +1808,22 @@ export default function AdminLessonsHallSheetPage() {
                       {practiceCanceling ? "차단 해제 중..." : "운영 차단 해제"}
                     </button>
                   ) : (
-                    <>
-                    
-                      <button
-                        onClick={cancelPracticeReservation}
-                        disabled={practiceCanceling}
-                        style={{
-                          border: "1px solid #b91c1c",
-                          background: "#fff5f5",
-                          color: "#b91c1c",
-                          borderRadius: 10,
-                          padding: "6px 10px",
-                          cursor: practiceCanceling ? "not-allowed" : "pointer",
-                          fontWeight: 900,
-                          opacity: practiceCanceling ? 0.7 : 1,
-                        }}
-                      >
-                        {practiceCanceling ? "취소 처리 중..." : "연습실 예약 취소"}
-                      </button>
-                    </>
+                    <button
+                      onClick={cancelPracticeReservation}
+                      disabled={practiceCanceling}
+                      style={{
+                        border: "1px solid #b91c1c",
+                        background: "#fff5f5",
+                        color: "#b91c1c",
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        cursor: practiceCanceling ? "not-allowed" : "pointer",
+                        fontWeight: 900,
+                        opacity: practiceCanceling ? 0.7 : 1,
+                      }}
+                    >
+                      {practiceCanceling ? "취소 처리 중..." : "연습실 예약 취소"}
+                    </button>
                   )}
 
                   <button
@@ -1841,7 +1862,10 @@ export default function AdminLessonsHallSheetPage() {
                 </div>
 
                 <div>
-                  시간: <b>{clampHHMM(selectedPractice.start_time ?? "")} ~ {clampHHMM(selectedPractice.end_time ?? "")}</b>
+                  시간:{" "}
+                  <b>
+                    {clampHHMM(selectedPractice.start_time ?? "")} ~ {clampHHMM(selectedPractice.end_time ?? "")}
+                  </b>
                 </div>
 
                 <div>
