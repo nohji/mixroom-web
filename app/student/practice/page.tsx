@@ -168,6 +168,10 @@ function isPracticeReservableDate(dateStr: string) {
   return dateStr >= minYmd && dateStr <= maxYmd;
 }
 
+function isClosedWeekday(dateStr: string) {
+  return parseYmd(dateStr).getDay() === 4; // 목요일
+}
+
 export default function PracticeStudentPage() {
   const initialPolicyRange = getPracticeReservePolicyRange();
 
@@ -417,6 +421,11 @@ export default function PracticeStudentPage() {
     const st = slotStatus(selectedDate, t, selectedRoom);
     if (st.kind !== "free") return;
 
+    if (isClosedWeekday(selectedDate)) {
+      showToast("매주 목요일은 휴무입니다.", "warn");
+      return;
+    }
+
     if (!isPracticeReservableDate(selectedDate)) {
       showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
       return;
@@ -449,6 +458,11 @@ export default function PracticeStudentPage() {
 
   async function reserve() {
     if (pickedTimes.length === 0 || acting) return;
+
+    if (isClosedWeekday(selectedDate)) {
+      showToast("매주 목요일은 휴무입니다.", "warn");
+      return;
+    }
 
     if (!isPracticeReservableDate(selectedDate)) {
       showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
@@ -986,7 +1000,10 @@ export default function PracticeStudentPage() {
 
             const outOfVoucher = !inRangeDate(dateStr, voucherFrom, voucherTo);
             const outOfPolicy = !isPracticeReservableDate(dateStr);
-            const blocked = outOfVoucher || outOfPolicy || initialLoading || refreshing || acting;
+            const outOfClosedDay = isClosedWeekday(dateStr);
+
+            const blocked =
+              outOfVoucher || outOfPolicy || outOfClosedDay || initialLoading || refreshing || acting;
             const opacity = blocked ? 0.55 : 1;
 
             return (
@@ -999,6 +1016,12 @@ export default function PracticeStudentPage() {
                     showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
                     return;
                   }
+                  
+                  if (outOfClosedDay) {
+                    showToast("매주 목요일은 휴무입니다.", "warn");
+                    return;
+                  }
+
                   if (outOfVoucher) {
                     showToast("수강권 기간 밖의 날짜입니다.", "warn");
                     return;
