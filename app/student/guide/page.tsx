@@ -40,10 +40,17 @@ export default function StudentGuidePage() {
         </div>
 
         <div style={{ fontSize: 14, lineHeight: 1.6, color: "#111", fontWeight: 600 }}>
-          수업 변경, 연습실 예약 및 취소 규정을 반드시 확인해주세요.
+          📌 수업 변경, 연습실 예약 및 취소 규정을 반드시 확인해주세요.
           <br />
           규정 미확인으로 발생하는 문제는 책임지지 않습니다.
         </div>
+
+        <div style={{ fontSize: 14, lineHeight: 1.6, color: "#111", fontWeight: 600 }}>
+         📌 수강권 변경, 연장 및 연습실 예약은 영업일 기준 오후 6시~7시 사이 일괄 승인됩니다.
+          <br />
+          승인 결과는 오후 7시 이후 확인 부탁드립니다.
+        </div>
+
       </div>
 
       <Section title="🔁 레슨 변경 및 연장 규정">

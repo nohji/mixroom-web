@@ -839,7 +839,7 @@ export default function AdminLessonsHallSheetPage() {
               background: pickTeacherColor(t.id, t.name, t.teacher_color),
               border: "1px solid rgba(0,0,0,0.18)",
               display: "inline-block",
-              opacity: 0.26,
+              opacity: 1,
             }}
           />
         ))}
@@ -1427,7 +1427,7 @@ export default function AdminLessonsHallSheetPage() {
                                       background: pickTeacherColor(x.id, x.name, x.teacher_color),
                                       border: "1px solid rgba(0,0,0,0.15)",
                                       display: "inline-block",
-                                      opacity: 0.26,
+                                      opacity: 1,
                                     }}
                                   />
                                   <span style={{ fontSize: 12, color: "#111", fontWeight: 900 }}>

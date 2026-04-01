@@ -4,7 +4,10 @@ import { supabaseServer } from "@/lib/supabaseServer";
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    const guard = await requireAdmin();
+    if (!guard.ok) {
+      return NextResponse.json({ error: guard.error }, { status: guard.status });
+    }
 
     const body = await req.json().catch(() => ({}));
 
@@ -22,7 +25,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!Number.isFinite(hours) || hours <= 0) {
-      return NextResponse.json({ error: "invalid minutes" }, { status: 400 });
+      return NextResponse.json({ error: "invalid hours" }, { status: 400 });
     }
 
     const sb = supabaseServer;
