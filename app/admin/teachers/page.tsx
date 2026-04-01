@@ -19,6 +19,16 @@ type Availability = {
   effective_until: string | null;
 };
 
+type ChangeBlock = {
+  id: string;
+  teacher_id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  reason: string | null;
+  is_active: boolean;
+};
+
 const weekdayLabel = ["일", "월", "화", "수", "목", "금", "토"];
 
 function hhmm(t: string) {
@@ -86,6 +96,21 @@ export default function AdminTeachersPage() {
 
   const [effectiveFrom, setEffectiveFrom] = useState<string>(todayYmd());
   const [effectiveUntil, setEffectiveUntil] = useState<string>(addMonthsYmd(todayYmd(), 6));
+
+  const [blockRows, setBlockRows] = useState<ChangeBlock[]>([]);
+  const [blockLoading, setBlockLoading] = useState(false);
+
+  const [blockWeekday, setBlockWeekday] = useState<number>(1);
+  const [blockStartTime, setBlockStartTime] = useState("13:00");
+  const [blockEndTime, setBlockEndTime] = useState("14:00");
+  const [blockReason, setBlockReason] = useState("");
+
+  useEffect(() => {
+    if (toMin(blockEndTime) <= toMin(blockStartTime)) {
+      const next = HOUR_OPTIONS.find((t) => toMin(t) > toMin(blockStartTime));
+      if (next) setBlockEndTime(next);
+    }
+  }, [blockStartTime, blockEndTime]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth <= 900);
@@ -175,6 +200,27 @@ export default function AdminTeachersPage() {
     }
   };
 
+  const loadChangeBlocks = async (tid: string) => {
+    if (!tid) return;
+    if (!(await ensureLoggedIn())) return;
+  
+    setBlockLoading(true);
+    try {
+      const j = await adminFetch(
+        `/api/admin/teacher-change-blocks?teacherId=${encodeURIComponent(tid)}`,
+        { method: "GET" }
+      );
+  
+      const list = Array.isArray(j?.rows) ? (j.rows as ChangeBlock[]) : [];
+      setBlockRows(list);
+    } catch (e: any) {
+      alert(e?.message ?? "변경 차단 시간 조회 실패");
+      setBlockRows([]);
+    } finally {
+      setBlockLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadTeachers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -183,6 +229,7 @@ export default function AdminTeachersPage() {
   useEffect(() => {
     if (!teacherId) return;
     loadAvailabilities(teacherId);
+    loadChangeBlocks(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teacherId]);
 
@@ -258,6 +305,69 @@ export default function AdminTeachersPage() {
       alert(e?.message ?? "삭제 실패");
     }
   };
+  
+  const addChangeBlock = async () => {
+    if (!teacherId) return;
+    if (!(await ensureLoggedIn())) return;
+  
+    if (toMin(blockStartTime) >= toMin(blockEndTime)) {
+      alert("시간 오류: 시작시간은 종료시간보다 빨라야 해요.");
+      return;
+    }
+  
+    try {
+      await adminFetch(`/api/admin/teacher-change-blocks`, {
+        method: "POST",
+        body: JSON.stringify({
+          teacherId,
+          weekday: blockWeekday,
+          startTime: `${blockStartTime}:00`,
+          endTime: `${blockEndTime}:00`,
+          reason: blockReason || null,
+          isActive: true,
+        }),
+      });
+  
+      setBlockReason("");
+      await loadChangeBlocks(teacherId);
+    } catch (e: any) {
+      alert(e?.message ?? "변경 차단 시간 추가 실패");
+    }
+  };
+  
+  const toggleBlockActive = async (id: string, next: boolean) => {
+    if (!(await ensureLoggedIn())) return;
+  
+    try {
+      await adminFetch(`/api/admin/teacher-change-blocks`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          isActive: next,
+        }),
+      });
+  
+      setBlockRows((prev) => prev.map((r) => (r.id === id ? { ...r, is_active: next } : r)));
+    } catch (e: any) {
+      alert(e?.message ?? "변경 차단 상태 변경 실패");
+    }
+  };
+  
+  const removeChangeBlock = async (id: string) => {
+    if (!confirm("삭제할까요?")) return;
+    if (!(await ensureLoggedIn())) return;
+  
+    try {
+      await adminFetch(`/api/admin/teacher-change-blocks`, {
+        method: "DELETE",
+        body: JSON.stringify({ id }),
+      });
+  
+      setBlockRows((prev) => prev.filter((r) => r.id !== id));
+    } catch (e: any) {
+      alert(e?.message ?? "변경 차단 삭제 실패");
+    }
+  };
 
   const selectedTeacherName = useMemo(() => {
     return teachers.find((t) => t.id === teacherId)?.name ?? "(이름 없음)";
@@ -299,7 +409,11 @@ export default function AdminTeachersPage() {
             </select>
 
             <button
-              onClick={() => teacherId && loadAvailabilities(teacherId)}
+            onClick={() => {
+              if (!teacherId) return;
+              loadAvailabilities(teacherId);
+              loadChangeBlocks(teacherId);
+            }}
               style={{
                 ...ghostButton,
                 width: isMobile ? "100%" : "auto",
@@ -536,6 +650,185 @@ export default function AdminTeachersPage() {
 
                     <button
                       onClick={() => removeRow(r.id)}
+                      style={{
+                        ...dangerGhostButton,
+                        width: "100%",
+                        justifyContent: "center",
+                      }}
+                    >
+                      삭제
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div style={{ height: 14 }} />
+
+        <section style={cardStyle}>
+          <div style={sectionTitleStyle}>매주 변경 차단 시간</div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(4, minmax(0, 1fr))",
+              gap: 10,
+            }}
+          >
+            <Field label="요일">
+              <select
+                value={blockWeekday}
+                onChange={(e) => setBlockWeekday(Number(e.target.value))}
+                style={{ ...controlStyle, width: "100%" }}
+              >
+                {weekdayLabel.map((d, idx) => (
+                  <option key={idx} value={idx}>
+                    {d}요일
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="시작 시간">
+              <select
+                value={blockStartTime}
+                onChange={(e) => setBlockStartTime(e.target.value)}
+                style={{ ...controlStyle, width: "100%" }}
+              >
+                {HOUR_OPTIONS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="종료 시간">
+              <select
+                value={blockEndTime}
+                onChange={(e) => setBlockEndTime(e.target.value)}
+                style={{ ...controlStyle, width: "100%" }}
+              >
+                {HOUR_OPTIONS.filter((t) => toMin(t) > toMin(blockStartTime)).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="사유">
+              <input
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                placeholder="예: 점심시간 / 연강 방지"
+                style={{ ...controlStyle, width: "100%" }}
+              />
+            </Field>
+          </div>
+
+          <div
+            style={{
+              marginTop: 12,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <button
+              onClick={addChangeBlock}
+              style={{
+                ...darkButton,
+                width: isMobile ? "100%" : "auto",
+                justifyContent: "center",
+              }}
+            >
+              변경 차단 추가
+            </button>
+
+            <div style={{ color: "#666", fontSize: 13 }}>
+              * 이 시간은 근무 중이어도 <b>수업 변경 후보 시간에서는 제외</b>돼요.
+            </div>
+          </div>
+
+          <div style={{ height: 14 }} />
+
+          {blockLoading ? (
+            <p style={{ color: "#111" }}>불러오는 중...</p>
+          ) : blockRows.length === 0 ? (
+            <p style={{ color: "#666" }}>등록된 변경 차단 시간이 없습니다.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {blockRows.map((r) => (
+                <div
+                  key={r.id}
+                  style={{
+                    border: "1px solid #e5e5e5",
+                    borderRadius: 14,
+                    padding: 14,
+                    background: "#fff",
+                    display: "grid",
+                    gap: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          fontSize: isMobile ? 15 : 16,
+                          color: "#111",
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {weekdayLabel[r.weekday]}요일 · {hhmm(r.start_time)} ~ {hhmm(r.end_time)}
+                      </div>
+
+                      <div style={{ color: "#555", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
+                        사유: <b style={{ color: "#111" }}>{r.reason || "-"}</b>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {r.is_active ? (
+                        <span style={badgeSuccess}>활성</span>
+                      ) : (
+                        <span style={badgeWarn}>비활성</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: isMobile ? "1fr 1fr" : "max-content max-content",
+                      gap: 8,
+                    }}
+                  >
+                    <button
+                      onClick={() => toggleBlockActive(r.id, !r.is_active)}
+                      style={{
+                        ...ghostButton,
+                        width: "100%",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {r.is_active ? "비활성화" : "활성화"}
+                    </button>
+
+                    <button
+                      onClick={() => removeChangeBlock(r.id)}
                       style={{
                         ...dangerGhostButton,
                         width: "100%",

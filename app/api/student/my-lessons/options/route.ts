@@ -78,6 +78,19 @@ function addBlockedRangeToSet(
   }
 }
 
+function isBlockedByChangeBlock(
+  slotTime: string,
+  blocks: Array<{ start_time: string; end_time: string }>
+) {
+  const slotMin = timeToMin(slotTime);
+
+  return blocks.some((b) => {
+    const startMin = timeToMin(clampHHMM(b.start_time));
+    const endMin = timeToMin(clampHHMM(b.end_time));
+    return slotMin >= startMin && slotMin < endMin;
+  });
+}
+
 export async function GET(req: Request) {
   const guard = await requireStudent();
   if (!guard.ok) return json({ error: guard.error }, guard.status);
@@ -97,6 +110,7 @@ export async function GET(req: Request) {
     { data: lessonsAll, error: lErrAll },
     { data: adminBlocks, error: bErr },
     { data: lessonsTeacher, error: lErrTeacher },
+    { data: changeBlocks, error: cbErr },
   ] = await Promise.all([
     supabaseServer
       .from("practice_rooms")
@@ -130,6 +144,12 @@ export async function GET(req: Request) {
       .eq("status", "scheduled")
       .gte("lesson_date", from)
       .lte("lesson_date", to),
+
+    supabaseServer
+      .from("teacher_change_blocks")
+      .select("weekday, start_time, end_time, is_active")
+      .eq("teacher_id", teacher_id)
+      .eq("is_active", true),
   ]);
 
   if (roomErr) return json({ error: roomErr.message }, 500);
@@ -137,6 +157,7 @@ export async function GET(req: Request) {
   if (lErrAll) return json({ error: lErrAll.message }, 500);
   if (bErr) return json({ error: bErr.message }, 500);
   if (lErrTeacher) return json({ error: lErrTeacher.message }, 500);
+  if (cbErr) return json({ error: cbErr.message }, 500);
 
   const roomIds = (rooms ?? []).map((r: any) => String(r.id));
 
@@ -196,6 +217,10 @@ export async function GET(req: Request) {
     const windows = availByDow.get(dow) ?? [];
     if (windows.length === 0) continue;
 
+    const changeBlocksForDay = (changeBlocks ?? []).filter(
+      (b: any) => normalizeDow(Number(b.weekday)) === dow
+    );
+
     const times: string[] = [];
     const rooms_by_time: any = {};
 
@@ -204,6 +229,9 @@ export async function GET(req: Request) {
         const t = minToTime(m);
 
         if (teacherBusy.has(`${dateStr}|${t}`)) continue;
+
+        // 🔥 강사 변경 차단 시간 제외
+        if (isBlockedByChangeBlock(t, changeBlocksForDay as any)) continue;
 
         const okRooms: string[] = [];
         for (const rid of roomIds) {

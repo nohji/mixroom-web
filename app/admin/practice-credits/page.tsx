@@ -7,12 +7,11 @@ import { authFetch } from "@/lib/authFetch";
 type PracticeCreditSummaryRow = {
   student_id: string;
   student_name: string;
-  included_total_hours: number;
-  included_used_hours: number;
-  included_remaining_hours: number;
   extra_free_hours: number;
   paid_hours: number;
-  total_remaining_hours: number;
+  base_remaining_hours: number;
+  pending_hours: number;
+  approved_basis_remaining_hours: number;
 };
 
 type GrantType = "ADMIN_ADD" | "PURCHASE";
@@ -29,10 +28,6 @@ function formatHours(hours: number | null | undefined) {
   }
 
   return `${rounded}시간`;
-}
-
-function formatUsedOverTotal(used: number | null | undefined, total: number | null | undefined) {
-  return `${formatHours(used)} / ${formatHours(total)}`;
 }
 
 export default function AdminPracticeCreditsPage() {
@@ -187,8 +182,10 @@ export default function AdminPracticeCreditsPage() {
             {loading ? "불러오는 중..." : `${filteredRows.length}명`}
           </div>
 
-          <div style={{ width: "100%", color: "#666", fontSize: 12, fontWeight: 700 }}>
-            무료 예약시간은 승인된 연습실 예약만 기준으로 표시돼요. (예: 2시간 / 4시간)
+          <div style={{ width: "100%", color: "#666", fontSize: 12, fontWeight: 700, lineHeight: "18px" }}>
+            기존시간은 현재 차감 반영된 시간이며, 확정 기준 잔여는 기존시간에 승인 대기 시간을 더한 값이에요.
+            <br />
+            추가 무료/유료는 누적 지급 기준으로 표시돼요.
           </div>
         </div>
 
@@ -211,11 +208,11 @@ export default function AdminPracticeCreditsPage() {
               <thead>
                 <tr style={{ background: "#fafafa" }}>
                   <th style={thStyle}>학생명</th>
-                  <th style={thStyle}>무료 예약시간</th>
-                  <th style={thStyle}>무료 잔여</th>
                   <th style={thStyle}>추가 무료</th>
                   <th style={thStyle}>유료</th>
-                  <th style={thStyle}>총 잔여</th>
+                  <th style={thStyle}>기존시간</th>
+                  <th style={thStyle}>승인 대기</th>
+                  <th style={thStyle}>확정 기준 잔여</th>
                   <th style={thStyle}>관리</th>
                 </tr>
               </thead>
@@ -241,19 +238,6 @@ export default function AdminPracticeCreditsPage() {
                         </td>
 
                         <td style={tdStyle}>
-                          <b>
-                            {formatUsedOverTotal(
-                              row.included_used_hours,
-                              row.included_total_hours
-                            )}
-                          </b>
-                        </td>
-
-                        <td style={tdStyle}>
-                          <b>{formatHours(row.included_remaining_hours)}</b>
-                        </td>
-
-                        <td style={tdStyle}>
                           <b>{formatHours(row.extra_free_hours)}</b>
                         </td>
 
@@ -262,7 +246,15 @@ export default function AdminPracticeCreditsPage() {
                         </td>
 
                         <td style={tdStyle}>
-                          <b>{formatHours(row.total_remaining_hours)}</b>
+                          <b>{formatHours(row.base_remaining_hours)}</b>
+                        </td>
+
+                        <td style={tdStyle}>
+                          <b>{formatHours(row.pending_hours)}</b>
+                        </td>
+
+                        <td style={tdStyle}>
+                          <b>{formatHours(row.approved_basis_remaining_hours)}</b>
                         </td>
 
                         <td style={tdStyle}>
