@@ -33,6 +33,16 @@ type LessonRow = {
   room_name: string;
 };
 
+type ChangeBlock = {
+  id: string;
+  teacher_id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  reason: string | null;
+  is_active: boolean;
+};
+
 const weekdayLabel = ["일", "월", "화", "수", "목", "금", "토"];
 
 function pad2(n: number) {
@@ -138,6 +148,8 @@ export default function AdminTeacherSchedulePage() {
   const [showCanceledLessons, setShowCanceledLessons] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
+  const [changeBlocks, setChangeBlocks] = useState<ChangeBlock[]>([]);
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 900);
     onResize();
@@ -202,6 +214,8 @@ export default function AdminTeacherSchedulePage() {
         adminFetch(`/api/admin/lessons?from=${week.from}&to=${week.to}`, { method: "GET" }),
       ]);
 
+      setChangeBlocks(Array.isArray(scheduleJson?.change_blocks) ? scheduleJson.change_blocks : []);
+
       const nextTeachers = Array.isArray(scheduleJson?.teachers)
         ? (scheduleJson.teachers as Teacher[])
         : [];
@@ -227,6 +241,7 @@ export default function AdminTeacherSchedulePage() {
       setTeachers([]);
       setAvailabilityRows([]);
       setLessons([]);
+      setChangeBlocks([]);
     } finally {
       setLoading(false);
     }
@@ -295,6 +310,11 @@ export default function AdminTeacherSchedulePage() {
     return teacherCards.find((c) => c.teacher.id === selectedTeacherId) ?? null;
   }, [selectedTeacherId, teacherCards]);
 
+  const selectedTeacherChangeBlocks = useMemo(() => {
+    if (!selectedTeacherId) return [];
+    return changeBlocks.filter((b) => b.teacher_id === selectedTeacherId);
+  }, [changeBlocks, selectedTeacherId]);
+
   const calendarHours = useMemo(() => {
     if (!selectedTeacherCard) return buildHourOptions(12, 23);
 
@@ -309,6 +329,11 @@ export default function AdminTeacherSchedulePage() {
     selectedTeacherCard.lessons.forEach((l) => {
       mins.push(toMin(l.lesson_time));
       maxs.push(toMin(l.lesson_time) + 60);
+    });
+
+    selectedTeacherChangeBlocks.forEach((b) => {
+      mins.push(toMin(b.start_time));
+      maxs.push(toMin(b.end_time));
     });
 
     if (mins.length === 0 || maxs.length === 0) {
@@ -327,7 +352,7 @@ export default function AdminTeacherSchedulePage() {
     }
 
     return buildHourOptions(startHour, endHour);
-  }, [selectedTeacherCard]);
+  }, [selectedTeacherCard, selectedTeacherChangeBlocks]);
 
   const totalTeacherCount = visibleCards.length;
   const totalLessonCount = visibleCards.reduce((sum, card) => sum + card.lessonCount, 0);
@@ -571,7 +596,7 @@ export default function AdminTeacherSchedulePage() {
                       {selectedTeacherCard?.teacher.name ?? "강사 선택"}
                     </div>
                     <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>
-                      연한 초록은 근무 가능 시간, 진한 블록은 이미 배정된 수업이에요.
+                      연한 초록은 근무 가능 시간, 회색은 변경 차단 시간, 진한 블록은 이미 배정된 수업이에요.
                     </div>
                   </div>
 
@@ -596,6 +621,7 @@ export default function AdminTeacherSchedulePage() {
                   lessons={selectedTeacherCard.lessons}
                   showCanceledLessons={showCanceledLessons}
                   isMobile={isMobile}
+                  changeBlocks={selectedTeacherChangeBlocks}
                 />
               )}
             </div>
@@ -614,6 +640,7 @@ function TeacherWeeklyCalendar({
   lessons,
   showCanceledLessons,
   isMobile,
+  changeBlocks,
 }: {
   teacher: Teacher;
   weekDays: Date[];
@@ -622,6 +649,7 @@ function TeacherWeeklyCalendar({
   lessons: LessonRow[];
   showCanceledLessons: boolean;
   isMobile: boolean;
+  changeBlocks: ChangeBlock[];
 }) {
   const TIME_W = isMobile ? 64 : 88;
   const DAY_W = isMobile ? 120 : 180;
@@ -663,6 +691,27 @@ function TeacherWeeklyCalendar({
     [availabilityRows]
   );
 
+  const getBlockedReason = useCallback(
+    (date: Date, time: string) => {
+      const weekday = date.getDay();
+      const t = toMin(time);
+
+      const hit = changeBlocks.find((b) => {
+        if (!b.is_active) return false;
+        if (normalizeWeekday(Number(b.weekday)) !== weekday) return false;
+
+        const s = toMin(b.start_time);
+        const e = toMin(b.end_time);
+
+        return t >= s && t < e;
+      });
+
+      if (!hit) return null;
+      return hit.reason?.trim() || "변경 차단 시간";
+    },
+    [changeBlocks]
+  );
+
   const minWidth = TIME_W + weekDays.length * DAY_W;
 
   const mobileLessonList = useMemo(() => {
@@ -671,6 +720,24 @@ function TeacherWeeklyCalendar({
       return hhmm(a.lesson_time).localeCompare(hhmm(b.lesson_time));
     });
   }, [visibleLessons]);
+
+  const weeklyChangeBlockLabels = useMemo(() => {
+    return Array.from(
+      changeBlocks.reduce((map, row) => {
+        if (!row.is_active) return map;
+        const wd = normalizeWeekday(row.weekday);
+        const key = `${wd}-${hhmm(row.start_time)}-${hhmm(row.end_time)}-${row.reason ?? ""}`;
+        if (!map.has(key)) {
+          const reasonText = row.reason?.trim() ? ` (${row.reason.trim()})` : "";
+          map.set(
+            key,
+            `${weekdayLabel[wd]} ${hhmm(row.start_time)}~${hhmm(row.end_time)}${reasonText}`
+          );
+        }
+        return map;
+      }, new Map<string, string>()).values()
+    );
+  }, [changeBlocks]);
 
   return (
     <>
@@ -749,9 +816,8 @@ function TeacherWeeklyCalendar({
             }}
           >
             {calendarHours.map((hourText) => (
-              <>
+              <div key={`row-${hourText}`} style={{ display: "contents" }}>
                 <div
-                  key={`time-${hourText}`}
                   style={{
                     position: "sticky",
                     left: 0,
@@ -776,20 +842,78 @@ function TeacherWeeklyCalendar({
                   const key = `${dateStr}|${hourText}`;
                   const cellLessons = lessonsMap.get(key) ?? [];
                   const available = hasAvailabilityAt(d, hourText);
+                  const blockedReason = getBlockedReason(d, hourText);
+                  const blocked = Boolean(blockedReason);
 
                   return (
                     <div
                       key={`${dateStr}-${hourText}`}
+                      title={blocked ? `변경 차단: ${blockedReason}` : undefined}
                       style={{
                         minHeight: ROW_H,
                         borderRight: "1px solid #ececec",
                         borderBottom: "1px solid #ececec",
                         padding: isMobile ? 4 : 6,
-                        background: available ? "#edf9f0" : "#fafafa",
+                        background: blocked
+                          ? "#f3f4f6"
+                          : available
+                          ? "#edf9f0"
+                          : "#fafafa",
+                        position: "relative",
                       }}
                     >
+                      {blocked && (
+                        <>
+                          <div
+                            style={{
+                              position: "absolute",
+                              inset: 0,
+                              backgroundImage:
+                                "repeating-linear-gradient(135deg, rgba(0,0,0,0.06) 0 6px, transparent 6px 12px)",
+                              pointerEvents: "none",
+                            }}
+                          />
+                          <div
+                            style={{
+                              position: "absolute",
+                              right: 6,
+                              bottom: 4,
+                              maxWidth: "70%",
+                              fontSize: isMobile ? 9 : 10,
+                              fontWeight: 900,
+                              color: "#6b7280",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              pointerEvents: "none",
+                            }}
+                          >
+                            {blockedReason}
+                          </div>
+                        </>
+                      )}
+
                       {cellLessons.length === 0 ? (
-                        available ? (
+                        blocked ? (
+                          <div
+                            style={{
+                              height: "100%",
+                              borderRadius: 10,
+                              border: "1px dashed #cbd5e1",
+                              background: "rgba(243,244,246,0.72)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: isMobile ? 11 : 12,
+                              fontWeight: 800,
+                              color: "#6b7280",
+                              position: "relative",
+                              zIndex: 1,
+                            }}
+                          >
+                            변경 차단
+                          </div>
+                        ) : available ? (
                           <div
                             style={{
                               height: "100%",
@@ -802,13 +926,15 @@ function TeacherWeeklyCalendar({
                               fontSize: isMobile ? 11 : 12,
                               fontWeight: 800,
                               color: "#4b7b55",
+                              position: "relative",
+                              zIndex: 1,
                             }}
                           >
                             빈 시간
                           </div>
                         ) : null
                       ) : (
-                        <div style={{ display: "grid", gap: 4 }}>
+                        <div style={{ display: "grid", gap: 4, position: "relative", zIndex: 2 }}>
                           {cellLessons.map((lesson) => {
                             const canceled = String(lesson.status ?? "").toLowerCase() === "canceled";
 
@@ -848,7 +974,7 @@ function TeacherWeeklyCalendar({
                     </div>
                   );
                 })}
-              </>
+              </div>
             ))}
           </div>
         </div>
@@ -891,6 +1017,34 @@ function TeacherWeeklyCalendar({
                   fontSize: 13,
                   fontWeight: 800,
                 }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div style={{ fontWeight: 1000, marginTop: 4 }}>변경 차단 시간</div>
+
+        {weeklyChangeBlockLabels.length === 0 ? (
+          <div style={{ color: "#777" }}>등록된 변경 차단 시간이 없습니다.</div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {weeklyChangeBlockLabels.map((label) => (
+              <span
+                key={label}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "8px 11px",
+                  borderRadius: 999,
+                  background: "#f3f4f6",
+                  border: "1px solid #d1d5db",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  color: "#4b5563",
+                }}
+                title={label}
               >
                 {label}
               </span>

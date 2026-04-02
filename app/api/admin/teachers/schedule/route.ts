@@ -46,45 +46,75 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
-    // 강사 목록
-    const { data: teachers, error: teachersErr } = await supabaseServer
-      .from("profiles")
-      .select("id, name")
-      .eq("role", "teacher")
-      .eq("is_active", "true")
-      .order("name", { ascending: true });
+    // 병렬 조회
+    const [
+      { data: teachers, error: teachersErr },
+      { data: availability, error: availErr },
+      { data: changeBlocks, error: blockErr },
+    ] = await Promise.all([
+      supabaseServer
+        .from("profiles")
+        .select("id, name")
+        .eq("role", "teacher")
+        .eq("is_active", true)
+        .order("name", { ascending: true }),
+
+      supabaseServer
+        .from("teacher_availabilities")
+        .select("id, teacher_id, weekday, start_time, end_time")
+        .order("weekday", { ascending: true })
+        .order("start_time", { ascending: true }),
+
+      supabaseServer
+        .from("teacher_change_blocks")
+        .select("id, teacher_id, weekday, start_time, end_time, reason, is_active")
+        .order("teacher_id", { ascending: true })
+        .order("weekday", { ascending: true })
+        .order("start_time", { ascending: true }),
+    ]);
 
     if (teachersErr) {
       return NextResponse.json({ error: teachersErr.message }, { status: 500 });
     }
 
-    // 근무시간 목록
-    const { data: availability, error: availErr } = await supabaseServer
-      .from("teacher_availabilities")
-      .select("id, teacher_id, weekday, start_time, end_time")
-      .order("weekday", { ascending: true })
-      .order("start_time", { ascending: true });
-
     if (availErr) {
       return NextResponse.json({ error: availErr.message }, { status: 500 });
     }
 
+    if (blockErr) {
+      return NextResponse.json({ error: blockErr.message }, { status: 500 });
+    }
+
     const teacherNameMap = new Map(
-      (teachers ?? []).map((t) => [t.id, t.name ?? "이름없음"])
+      (teachers ?? []).map((t: any) => [String(t.id), t.name ?? "이름없음"])
     );
 
-    const rows = (availability ?? []).map((row) => ({
-      id: row.id,
-      teacher_id: row.teacher_id,
-      teacher_name: teacherNameMap.get(row.teacher_id) ?? "이름없음",
-      weekday: row.weekday,
+    const rows = (availability ?? []).map((row: any) => ({
+      id: String(row.id),
+      teacher_id: String(row.teacher_id),
+      teacher_name: teacherNameMap.get(String(row.teacher_id)) ?? "이름없음",
+      weekday: Number(row.weekday),
       start_time: row.start_time,
       end_time: row.end_time,
     }));
 
+    const change_blocks = (changeBlocks ?? []).map((row: any) => ({
+      id: String(row.id),
+      teacher_id: String(row.teacher_id),
+      weekday: Number(row.weekday),
+      start_time: row.start_time,
+      end_time: row.end_time,
+      reason: row.reason ?? null,
+      is_active: Boolean(row.is_active),
+    }));
+
     return NextResponse.json({
       rows,
-      teachers: teachers ?? [],
+      teachers: (teachers ?? []).map((t: any) => ({
+        id: String(t.id),
+        name: t.name ?? "이름없음",
+      })),
+      change_blocks,
     });
   } catch (e: any) {
     return NextResponse.json(

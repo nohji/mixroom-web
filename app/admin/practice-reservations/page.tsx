@@ -9,14 +9,14 @@ type Status = "PENDING" | "APPROVED" | "REJECTED";
 
 type Row = {
   id: string;
-  student_id: string;
-  room_id: string;
+  student_id: string | null;
+  room_id: string | null;
   voucher_id: string | null;
 
-  date: string;
-  start_time: string;
-  end_time: string;
-  status: string;
+  date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: string | null;
 
   created_at: string | null;
   approved_at: string | null;
@@ -35,11 +35,24 @@ type Row = {
   voucher_class_id: string | null;
 };
 
-function formatDate(s: string) {
-  return String(s ?? "").slice(0, 10);
+function formatDate(s?: string | null) {
+  return String(s ?? "").slice(0, 10) || "-";
 }
-function clampHHMM(t: string) {
-  return String(t ?? "").slice(0, 5);
+
+function clampHHMM(t?: string | null) {
+  return String(t ?? "").slice(0, 5) || "-";
+}
+
+function shortId(v?: string | null) {
+  return v?.slice(0, 6) ?? "-";
+}
+
+function getRoomLabel(r: Row) {
+  return r.room_name ?? shortId(r.room_id);
+}
+
+function getStudentLabel(r: Row) {
+  return r.student_name ?? shortId(r.student_id);
 }
 
 const TABS: { key: Status; label: string }[] = [
@@ -99,9 +112,9 @@ export default function AdminPracticeReservationsPage() {
   const doApprove = async (r: Row) => {
     if (
       !confirm(
-        `이 연습실 신청을 APPROVE(승인) 할까요?\n\n${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
-          r.end_time
-        )}\n룸: ${r.room_name ?? r.room_id.slice(0, 6)}\n학생: ${r.student_name ?? r.student_id.slice(0, 6)}`
+        `이 연습실 신청을 APPROVE(승인) 할까요?\n\n${formatDate(r.date)} ${clampHHMM(
+          r.start_time
+        )}–${clampHHMM(r.end_time)}\n룸: ${getRoomLabel(r)}\n학생: ${getStudentLabel(r)}`
       )
     ) {
       return;
@@ -127,9 +140,9 @@ export default function AdminPracticeReservationsPage() {
     const note = prompt("거절 사유를 입력하세요.") ?? "";
     if (
       !confirm(
-        `이 연습실 신청을 REJECT(거절) 할까요?\n\n${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
-          r.end_time
-        )}\n룸: ${r.room_name ?? r.room_id.slice(0, 6)}\n학생: ${r.student_name ?? r.student_id.slice(0, 6)}`
+        `이 연습실 신청을 REJECT(거절) 할까요?\n\n${formatDate(r.date)} ${clampHHMM(
+          r.start_time
+        )}–${clampHHMM(r.end_time)}\n룸: ${getRoomLabel(r)}\n학생: ${getStudentLabel(r)}`
       )
     ) {
       return;
@@ -159,7 +172,7 @@ export default function AdminPracticeReservationsPage() {
   const renderVoucherContent = (r: Row) => {
     if (!r.voucher_id) return "-";
 
-    if (!r.voucher_type) return r.voucher_id.slice(0, 6);
+    if (!r.voucher_type) return shortId(r.voucher_id);
 
     const meta = [
       r.voucher_quantity != null ? `잔여:${r.voucher_quantity}` : null,
@@ -180,7 +193,6 @@ export default function AdminPracticeReservationsPage() {
   return (
     <AdminLayoutShell title="연습실 예약 승인 관리">
       <div style={{ width: "100%", maxWidth: 1400, minWidth: 0 }}>
-        {/* Tabs */}
         <div
           style={{
             border: "1px solid #e5e5e5",
@@ -252,7 +264,9 @@ export default function AdminPracticeReservationsPage() {
           <div style={{ display: "grid", gap: 12 }}>
             {rows.map((r) => {
               const isActing = actingId === r.id;
-              const dt = `${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(r.end_time)}`;
+              const dt = `${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
+                r.end_time
+              )}`;
 
               return (
                 <div
@@ -275,20 +289,22 @@ export default function AdminPracticeReservationsPage() {
                     }}
                   >
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 1000, fontSize: 16, color: "#111" }}>연습실 예약 요청</div>
+                      <div style={{ fontWeight: 1000, fontSize: 16, color: "#111" }}>
+                        연습실 예약 요청
+                      </div>
                       <div style={{ color: "#666", fontSize: 12, marginTop: 3 }}>
                         {r.created_at ? String(r.created_at).slice(0, 16).replace("T", " ") : "-"}
                       </div>
                     </div>
 
-                    <StatusBadge status={r.status} />
+                    <StatusBadge status={r.status ?? "-"} />
                   </div>
 
                   <InfoGrid
                     items={[
                       { label: "일시", value: dt },
-                      { label: "룸", value: r.room_name ?? r.room_id.slice(0, 6) },
-                      { label: "학생", value: r.student_name ?? r.student_id.slice(0, 6) },
+                      { label: "룸", value: getRoomLabel(r) },
+                      { label: "학생", value: getStudentLabel(r) },
                       { label: "바우처", value: renderVoucherText(r) },
                     ]}
                   />
@@ -303,10 +319,8 @@ export default function AdminPracticeReservationsPage() {
                   >
                     <div style={{ fontSize: 12, color: "#666", fontWeight: 800 }}>처리 정보</div>
                     <div style={{ marginTop: 6, display: "grid", gap: 4, fontSize: 13, color: "#111" }}>
-                      <div>
-                      처리일: {formatDateTimeKST(r.approved_at)} 
-                      </div>
-                      <div>처리자: {r.approved_by_name ?? r.approved_by?.slice(0, 6) ?? "-"}</div>
+                      <div>처리일: {formatDateTimeKST(r.approved_at) || "-"}</div>
+                      <div>처리자: {r.approved_by_name ?? shortId(r.approved_by)}</div>
                       <div>거절사유: {r.rejected_reason ?? "-"}</div>
                     </div>
                   </div>
@@ -389,45 +403,81 @@ export default function AdminPracticeReservationsPage() {
               <tbody>
                 {rows.map((r) => {
                   const isActing = actingId === r.id;
-                  const dt = `${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(r.end_time)}`;
+                  const dt = `${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
+                    r.end_time
+                  )}`;
 
                   return (
                     <tr key={r.id}>
-                      <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2", fontWeight: 1000 }}>
-                        {r.status}
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          fontWeight: 1000,
+                        }}
+                      >
+                        {r.status ?? "-"}
                       </td>
 
-                      <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {dt}
                       </td>
 
-                      <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2", whiteSpace: "nowrap" }}>
-                        {r.room_name ?? r.room_id.slice(0, 6)}
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {getRoomLabel(r)}
                       </td>
 
-                      <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2", whiteSpace: "nowrap" }}>
-                        {r.student_name ?? r.student_id.slice(0, 6)}
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {getStudentLabel(r)}
                       </td>
 
                       <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2" }}>
                         {renderVoucherContent(r)}
                       </td>
 
-                      <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2", color: "#666" }}>
-                        {r.approved_at
-                        ? `처리됨 (${formatDateTimeKST(r.approved_at)})`
-                        : "-"}    
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          color: "#666",
+                        }}
+                      >
+                        {r.approved_at ? `처리됨 (${formatDateTimeKST(r.approved_at)})` : "-"}
                         {r.rejected_reason ? (
                           <div style={{ marginTop: 4, color: "#111" }}>사유: {r.rejected_reason}</div>
                         ) : null}
                         {r.approved_by_name || r.approved_by ? (
                           <div style={{ marginTop: 4, color: "#111" }}>
-                            처리자: {r.approved_by_name ?? r.approved_by?.slice(0, 6)}
+                            처리자: {r.approved_by_name ?? shortId(r.approved_by)}
                           </div>
                         ) : null}
                       </td>
 
-                      <td style={{ padding: "10px 10px", borderBottom: "1px solid #f2f2f2", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {r.status === "PENDING" ? (
                           <div style={{ display: "flex", gap: 8 }}>
                             <button
@@ -470,7 +520,7 @@ export default function AdminPracticeReservationsPage() {
 
 function renderVoucherText(r: Row) {
   if (!r.voucher_id) return "-";
-  if (!r.voucher_type) return r.voucher_id.slice(0, 6);
+  if (!r.voucher_type) return shortId(r.voucher_id);
 
   const meta = [
     r.voucher_quantity != null ? `잔여:${r.voucher_quantity}` : null,

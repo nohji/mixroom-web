@@ -176,7 +176,7 @@ export async function GET(req: Request) {
       if (r.room_id) roomIds.push(r.room_id);
     });
 
-    // 5) 연습실 예약
+    // 5) 연습실 예약 / 운영차단
     const { data: practiceRows, error: practiceErr } = await supabaseServer
       .from("practice_reservations")
       .select(`
@@ -190,7 +190,7 @@ export async function GET(req: Request) {
       `)
       .gte("date", from)
       .lte("date", to)
-      .eq("status", "approved");
+      .eq("status", "APPROVED");
 
     if (practiceErr) {
       return NextResponse.json({ error: practiceErr.message }, { status: 500 });
@@ -249,6 +249,25 @@ export async function GET(req: Request) {
 
     if (availabilityErr) {
       return NextResponse.json({ error: availabilityErr.message }, { status: 500 });
+    }
+
+    // 8) teacher_change_blocks (weekday 기준)
+    const { data: changeBlockRows, error: changeBlockErr } = await supabaseServer
+      .from("teacher_change_blocks")
+      .select(`
+        id,
+        teacher_id,
+        weekday,
+        start_time,
+        end_time,
+        reason
+      `)
+      .eq("teacher_id", teacherId)
+      .order("weekday", { ascending: true })
+      .order("start_time", { ascending: true });
+
+    if (changeBlockErr) {
+      return NextResponse.json({ error: changeBlockErr.message }, { status: 500 });
     }
 
     const classMap = new Map<string, any>(classRows.map((row: any) => [row.id, row]));
@@ -350,9 +369,18 @@ export async function GET(req: Request) {
       teacher_name: teacherProfile?.name ?? "강사",
       date: "",
       weekday: Number(row.weekday),
-      start_time: row.start_time,
-      end_time: row.end_time,
+      start_time: hhmm(row.start_time),
+      end_time: hhmm(row.end_time),
       device_type: row.device_type ?? "both",
+    }));
+
+    const changeBlocks = (changeBlockRows ?? []).map((row: any) => ({
+      id: row.id,
+      teacher_id: row.teacher_id ?? teacherId,
+      weekday: Number(row.weekday),
+      start_time: hhmm(row.start_time),
+      end_time: hhmm(row.end_time),
+      reason: row.reason ?? null,
     }));
 
     return NextResponse.json({
@@ -362,6 +390,7 @@ export async function GET(req: Request) {
       other_lessons: otherLessons,
       availability,
       practice_reservations: practiceReservations,
+      change_blocks: changeBlocks,
     });
   } catch (e: any) {
     return NextResponse.json(
