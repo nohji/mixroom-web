@@ -39,23 +39,39 @@ type ViewRow = {
 
 type RoomRow = { id: string; name: string | null };
 
-function clampHHMM(t: string) {
-  return String(t ?? "").slice(0, 5);
+const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
+function clampHHMM(t?: string | null) {
+  return String(t ?? "").slice(0, 5) || "-";
 }
-function formatDate(s: string) {
-  return String(s ?? "").slice(0, 10);
+
+function formatDate(s?: string | null) {
+  return String(s ?? "").slice(0, 10) || "-";
+}
+
+function formatDateWithWeekday(s?: string | null) {
+  if (!s) return "-";
+  const dateStr = String(s).slice(0, 10);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, d ?? 1);
+  const dow = DOW_KR[dt.getDay()] ?? "";
+  return `${dateStr} (${dow})`;
+}
+
+function shortId(v?: string | null) {
+  return v?.slice(0, 6) ?? "-";
 }
 
 function prettyOldToNew(r: ViewRow) {
   if (r.request_type === "EXTENSION") return "연장(해당 레슨 → 맨 뒤 +7일)";
 
-  const oldDate = r.lesson_date_old ? formatDate(r.lesson_date_old) : "-";
+  const oldDate = r.lesson_date_old ? formatDateWithWeekday(r.lesson_date_old) : "-";
   const oldTime = r.lesson_time_old ? clampHHMM(r.lesson_time_old) : "-";
 
-  const newDate = r.lesson_date_new ? formatDate(r.lesson_date_new) : "-";
+  const newDate = r.lesson_date_new ? formatDateWithWeekday(r.lesson_date_new) : "-";
   const newTime = r.lesson_time_new ? clampHHMM(r.lesson_time_new) : "-";
 
-  return `${oldDate} ${oldTime}  →  ${newDate} ${newTime}`;
+  return `${oldDate} ${oldTime} → ${newDate} ${newTime}`;
 }
 
 const TABS: { key: Status; label: string }[] = [
@@ -124,7 +140,7 @@ export default function AdminLessonChangeRequestsPage() {
       .select("room_id")
       .eq("date", date)
       .eq("start_time", time)
-      .eq("status", "approved");
+      .in("status", ["APPROVED", "approved"]);
 
     const busy = [...(lessons ?? []), ...(practice ?? [])]
       .map((x: any) => x.room_id)
@@ -136,12 +152,19 @@ export default function AdminLessonChangeRequestsPage() {
   const load = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
+    const query = supabase
       .from("admin_lesson_change_requests")
       .select("*")
-      .eq("status", tab)
-      .order("created_at", { ascending: false })
-      .limit(200);
+      .eq("status", tab);
+
+    const orderedQuery =
+      tab === "PENDING"
+        ? query.order("created_at", { ascending: true })
+        : query
+            .order("admin_processed_at", { ascending: false })
+            .order("created_at", { ascending: false });
+
+    const { data, error } = await orderedQuery.limit(200);
 
     if (error) {
       alert(error.message ?? "목록 조회 실패");
@@ -267,7 +290,6 @@ export default function AdminLessonChangeRequestsPage() {
   return (
     <AdminLayoutShell title="레슨 변경/연장 요청 관리">
       <div style={{ width: "100%", maxWidth: 1600, minWidth: 0 }}>
-        {/* Tabs */}
         <div
           style={{
             border: "1px solid #e5e5e5",
@@ -339,15 +361,15 @@ export default function AdminLessonChangeRequestsPage() {
           <div style={{ display: "grid", gap: 12 }}>
             {rows.map((r) => {
               const isActing = actingId === r.id;
-              const lessonDateOld = r.lesson_date_old ? formatDate(r.lesson_date_old) : "-";
+              const lessonDateOld = r.lesson_date_old ? formatDateWithWeekday(r.lesson_date_old) : "-";
               const lessonTimeOld = r.lesson_time_old ? clampHHMM(r.lesson_time_old) : "-";
               const oldToNew = prettyOldToNew(r);
-              const roomOldText = r.room_name_old ?? (r.room_id_old ? r.room_id_old.slice(0, 6) : "-");
+              const roomOldText = r.room_name_old ?? (r.room_id_old ? shortId(r.room_id_old) : "-");
 
               const canPickRoom = r.status === "PENDING" && r.request_type === "CHANGE";
               const pickedRoomId = selectedRoomByReq[r.id] ?? "";
               const pickedRoomLabel = pickedRoomId
-                ? roomNameById.get(pickedRoomId) ?? pickedRoomId.slice(0, 6)
+                ? roomNameById.get(pickedRoomId) ?? shortId(pickedRoomId)
                 : "";
 
               return (
@@ -375,7 +397,7 @@ export default function AdminLessonChangeRequestsPage() {
                         {r.request_type === "EXTENSION" ? "연장 요청" : "변경 요청"}
                       </div>
                       <div style={{ color: "#666", fontSize: 12, marginTop: 3 }}>
-                        {r.created_at ? String(r.created_at).slice(0, 16).replace("T", " ") : "-"}
+                        신청: {formatDateTimeKST(r.created_at) || "-"}
                       </div>
                     </div>
 
@@ -387,18 +409,13 @@ export default function AdminLessonChangeRequestsPage() {
 
                   <InfoGrid
                     items={[
-                      { label: "학생", value: r.student_name ?? r.student_id.slice(0, 6) },
-                      {
-                        label: "기존 레슨",
-                        value: `${lessonDateOld} ${lessonTimeOld}`,
-                      },
-                      {
-                        label: "변경 내용",
-                        value: oldToNew,
-                      },
+                      { label: "학생", value: r.student_name ?? shortId(r.student_id) },
+                      { label: "신청시간", value: formatDateTimeKST(r.created_at) || "-" },
+                      { label: "기존 레슨", value: `${lessonDateOld} ${lessonTimeOld}` },
+                      { label: "변경 내용", value: oldToNew },
                       {
                         label: "기존 강사",
-                        value: r.teacher_name_old ?? (r.teacher_id_old ? r.teacher_id_old.slice(0, 6) : "-"),
+                        value: r.teacher_name_old ?? (r.teacher_id_old ? shortId(r.teacher_id_old) : "-"),
                       },
                       {
                         label: "기존 룸",
@@ -455,7 +472,7 @@ export default function AdminLessonChangeRequestsPage() {
                           .filter((rr) => !(busyRoomsByReq[r.id] ?? []).includes(rr.id))
                           .map((rr) => (
                             <option key={rr.id} value={rr.id}>
-                              {rr.name ?? rr.id.slice(0, 6)}
+                              {rr.name ?? shortId(rr.id)}
                             </option>
                           ))}
                       </select>
@@ -476,9 +493,7 @@ export default function AdminLessonChangeRequestsPage() {
                   >
                     <div style={{ fontSize: 12, color: "#666", fontWeight: 800 }}>처리 정보</div>
                     <div style={{ marginTop: 6, display: "grid", gap: 4, fontSize: 13, color: "#111" }}>
-                      <div>
-                       처리일: {formatDateTimeKST(r.admin_processed_at)}
-                      </div>
+                      <div>처리일: {formatDateTimeKST(r.admin_processed_at) || "-"}</div>
                       <div>처리자: {r.handled_by_name ?? "-"}</div>
                       <div>메모: {r.admin_note ?? "-"}</div>
                     </div>
@@ -506,7 +521,11 @@ export default function AdminLessonChangeRequestsPage() {
                           {r.request_type === "EXTENSION" ? "연장 승인" : "변경 승인"}
                         </button>
 
-                        <button disabled={isActing} onClick={() => doReject(r)} style={mobileGhostButton(isActing)}>
+                        <button
+                          disabled={isActing}
+                          onClick={() => doReject(r)}
+                          style={mobileGhostButton(isActing)}
+                        >
                           거절
                         </button>
                       </>
@@ -545,6 +564,7 @@ export default function AdminLessonChangeRequestsPage() {
                   {[
                     "상태",
                     "종류",
+                    "신청시간",
                     "레슨(기존)",
                     "변경(기존→요청)",
                     "학생",
@@ -576,24 +596,28 @@ export default function AdminLessonChangeRequestsPage() {
                 {rows.map((r) => {
                   const isActing = actingId === r.id;
 
-                  const lessonDateOld = r.lesson_date_old ? formatDate(r.lesson_date_old) : "-";
+                  const lessonDateOld = r.lesson_date_old ? formatDateWithWeekday(r.lesson_date_old) : "-";
                   const lessonTimeOld = r.lesson_time_old ? clampHHMM(r.lesson_time_old) : "-";
 
                   const oldToNew = prettyOldToNew(r);
 
-                  const roomOldText = r.room_name_old ?? (r.room_id_old ? r.room_id_old.slice(0, 6) : "-");
+                  const roomOldText = r.room_name_old ?? (r.room_id_old ? shortId(r.room_id_old) : "-");
 
                   const canPickRoom = r.status === "PENDING" && r.request_type === "CHANGE";
                   const pickedRoomId = selectedRoomByReq[r.id] ?? "";
                   const pickedRoomLabel = pickedRoomId
-                    ? roomNameById.get(pickedRoomId) ?? pickedRoomId.slice(0, 6)
+                    ? roomNameById.get(pickedRoomId) ?? shortId(pickedRoomId)
                     : "";
 
                   return (
                     <tr key={r.id}>
                       <td style={td({ bold: true })}>{r.status}</td>
 
-                      <td style={td({ nowrap: true })}>{r.request_type === "EXTENSION" ? "연장" : "변경"}</td>
+                      <td style={td({ nowrap: true })}>
+                        {r.request_type === "EXTENSION" ? "연장" : "변경"}
+                      </td>
+
+                      <td style={td({ nowrap: true })}>{formatDateTimeKST(r.created_at) || "-"}</td>
 
                       <td style={td({ nowrap: true })}>
                         {lessonDateOld} {lessonTimeOld}
@@ -601,10 +625,12 @@ export default function AdminLessonChangeRequestsPage() {
 
                       <td style={td()}>{oldToNew}</td>
 
-                      <td style={td({ nowrap: true })}>{r.student_name ?? r.student_id.slice(0, 6)}</td>
+                      <td style={td({ nowrap: true })}>
+                        {r.student_name ?? shortId(r.student_id)}
+                      </td>
 
                       <td style={td({ nowrap: true })}>
-                        {r.teacher_name_old ?? (r.teacher_id_old ? r.teacher_id_old.slice(0, 6) : "-")}
+                        {r.teacher_name_old ?? (r.teacher_id_old ? shortId(r.teacher_id_old) : "-")}
                       </td>
 
                       <td style={td({ nowrap: true })}>{roomOldText}</td>
@@ -634,7 +660,7 @@ export default function AdminLessonChangeRequestsPage() {
                               .filter((rr) => !(busyRoomsByReq[r.id] ?? []).includes(rr.id))
                               .map((rr) => (
                                 <option key={rr.id} value={rr.id}>
-                                  {rr.name ?? rr.id.slice(0, 6)}
+                                  {rr.name ?? shortId(rr.id)}
                                 </option>
                               ))}
                           </select>
@@ -648,10 +674,12 @@ export default function AdminLessonChangeRequestsPage() {
                       <td style={td()}>{r.reason ?? "-"}</td>
 
                       <td style={td({ color: "#666" })}>
-                      {r.admin_processed_at
-                      ? `처리됨 (${formatDateTimeKST(r.admin_processed_at)})`
-                      : "-"}
-                        {r.admin_note ? <div style={{ marginTop: 4, color: "#111" }}>메모: {r.admin_note}</div> : null}
+                        {r.admin_processed_at
+                          ? `처리됨 (${formatDateTimeKST(r.admin_processed_at)})`
+                          : "-"}
+                        {r.admin_note ? (
+                          <div style={{ marginTop: 4, color: "#111" }}>메모: {r.admin_note}</div>
+                        ) : null}
                         {r.handled_by_name ? (
                           <div style={{ marginTop: 4, color: "#111" }}>처리자: {r.handled_by_name}</div>
                         ) : null}
@@ -673,7 +701,11 @@ export default function AdminLessonChangeRequestsPage() {
                               {r.request_type === "EXTENSION" ? "연장 승인" : "변경 승인"}
                             </button>
 
-                            <button disabled={isActing} onClick={() => doReject(r)} style={btnGhost(isActing)}>
+                            <button
+                              disabled={isActing}
+                              onClick={() => doReject(r)}
+                              style={btnGhost(isActing)}
+                            >
                               거절
                             </button>
                           </div>
@@ -690,6 +722,10 @@ export default function AdminLessonChangeRequestsPage() {
         )}
 
         <div style={{ marginTop: 10, fontSize: 12, color: "#666", lineHeight: 1.6 }}>
+          * PENDING 탭은 신청시간 기준으로 먼저 신청한 요청이 위에 표시됩니다.
+          <br />
+          * APPROVED / REJECTED 탭은 처리시간 기준으로 최근 처리한 요청이 위에 표시됩니다.
+          <br />
           * EXTENSION(연장) 승인 시 날짜를 비우면 자동으로 “마지막 레슨 + 7일”, 입력하면 지정 날짜로 반영됩니다.
           <br />
           * CHANGE(변경) 요청은 학생이 날짜/시간만 요청하며, 룸은 관리자가 승인 시 선택합니다.

@@ -35,8 +35,19 @@ type Row = {
   voucher_class_id: string | null;
 };
 
+const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
 function formatDate(s?: string | null) {
   return String(s ?? "").slice(0, 10) || "-";
+}
+
+function formatDateWithWeekday(s?: string | null) {
+  if (!s) return "-";
+  const dateStr = String(s).slice(0, 10);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, d ?? 1);
+  const dow = DOW_KR[dt.getDay()] ?? "";
+  return `${dateStr} (${dow})`;
 }
 
 function clampHHMM(t?: string | null) {
@@ -85,14 +96,23 @@ export default function AdminPracticeReservationsPage() {
   const load = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from("admin_practice_reservations")
-      .select("*")
-      .eq("status", tab)
-      .order("date", { ascending: false })
-      .order("start_time", { ascending: false })
-      .limit(300);
+    const query = supabase
+    .from("admin_practice_reservations")
+    .select("*")
+    .eq("status", tab);
 
+    const orderedQuery =
+      tab === "PENDING"
+        ? query
+            .order("created_at", { ascending: true })
+            .order("date", { ascending: true })
+            .order("start_time", { ascending: true })
+        : query
+            .order("approved_at", { ascending: false })
+            .order("created_at", { ascending: false });
+
+    const { data, error } = await orderedQuery.limit(300);
+    
     if (error) {
       alert(error.message ?? "목록 조회 실패");
       setRows([]);
@@ -112,7 +132,7 @@ export default function AdminPracticeReservationsPage() {
   const doApprove = async (r: Row) => {
     if (
       !confirm(
-        `이 연습실 신청을 APPROVE(승인) 할까요?\n\n${formatDate(r.date)} ${clampHHMM(
+        `이 연습실 신청을 APPROVE(승인) 할까요?\n\n${formatDateWithWeekday(r.date)} ${clampHHMM(
           r.start_time
         )}–${clampHHMM(r.end_time)}\n룸: ${getRoomLabel(r)}\n학생: ${getStudentLabel(r)}`
       )
@@ -140,7 +160,7 @@ export default function AdminPracticeReservationsPage() {
     const note = prompt("거절 사유를 입력하세요.") ?? "";
     if (
       !confirm(
-        `이 연습실 신청을 REJECT(거절) 할까요?\n\n${formatDate(r.date)} ${clampHHMM(
+        `이 연습실 신청을 REJECT(거절) 할까요?\n\n${formatDateWithWeekday(r.date)} ${clampHHMM(
           r.start_time
         )}–${clampHHMM(r.end_time)}\n룸: ${getRoomLabel(r)}\n학생: ${getStudentLabel(r)}`
       )
@@ -264,7 +284,7 @@ export default function AdminPracticeReservationsPage() {
           <div style={{ display: "grid", gap: 12 }}>
             {rows.map((r) => {
               const isActing = actingId === r.id;
-              const dt = `${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
+              const dt = `${formatDateWithWeekday(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
                 r.end_time
               )}`;
 
@@ -293,7 +313,7 @@ export default function AdminPracticeReservationsPage() {
                         연습실 예약 요청
                       </div>
                       <div style={{ color: "#666", fontSize: 12, marginTop: 3 }}>
-                        {r.created_at ? String(r.created_at).slice(0, 16).replace("T", " ") : "-"}
+                        신청: {formatDateTimeKST(r.created_at) || "-"}
                       </div>
                     </div>
 
@@ -303,6 +323,7 @@ export default function AdminPracticeReservationsPage() {
                   <InfoGrid
                     items={[
                       { label: "일시", value: dt },
+                     // { label: "신청시간", value: formatDateTimeKST(r.created_at) || "-" },
                       { label: "룸", value: getRoomLabel(r) },
                       { label: "학생", value: getStudentLabel(r) },
                       { label: "바우처", value: renderVoucherText(r) },
@@ -382,7 +403,7 @@ export default function AdminPracticeReservationsPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#fafafa" }}>
-                  {["상태", "일자/시간", "룸", "학생", "바우처", "처리정보", "액션"].map((h) => (
+                  {["상태", "일자/시간", "신청시간", "룸", "학생", "바우처", "처리정보", "액션"].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -403,7 +424,7 @@ export default function AdminPracticeReservationsPage() {
               <tbody>
                 {rows.map((r) => {
                   const isActing = actingId === r.id;
-                  const dt = `${formatDate(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
+                  const dt = `${formatDateWithWeekday(r.date)} ${clampHHMM(r.start_time)}–${clampHHMM(
                     r.end_time
                   )}`;
 
@@ -427,6 +448,16 @@ export default function AdminPracticeReservationsPage() {
                         }}
                       >
                         {dt}
+                      </td>
+
+                      <td
+                        style={{
+                          padding: "10px 10px",
+                          borderBottom: "1px solid #f2f2f2",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {formatDateTimeKST(r.created_at) || "-"}
                       </td>
 
                       <td
@@ -509,6 +540,8 @@ export default function AdminPracticeReservationsPage() {
         )}
 
         <div style={{ marginTop: 10, fontSize: 12, color: "#666", lineHeight: 1.6 }}>
+          * 신청시간 기준으로 먼저 신청한 예약이 위에 표시됩니다.
+          <br />
           * 승인(APPROVED)되면 확정 예약입니다. 거절(REJECTED) 시 바우처 홀드(차감)는 자동 복구됩니다.
         </div>
       </div>
@@ -538,11 +571,13 @@ function InfoGrid({
 }: {
   items: { label: string; value: string }[];
 }) {
+  const colCount = items.length >= 5 ? 1 : 2;
+
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gridTemplateColumns: colCount === 1 ? "1fr" : "repeat(2, minmax(0, 1fr))",
         gap: 8,
       }}
     >
