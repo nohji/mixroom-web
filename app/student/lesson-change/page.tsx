@@ -311,6 +311,12 @@ export default function StudentLessonChangePage() {
     return activeClass.end_date;
   }, [activeClass]);
 
+  const isChangeQuotaExceeded = useMemo(() => {
+    if (!activeClass) return false;
+    if (changeQuota.used == null) return false;
+    return changeQuota.used >= changeQuota.limit;
+  }, [activeClass, changeQuota]);
+
   const nextLesson = useMemo(() => {
     const now = Date.now();
 
@@ -595,6 +601,10 @@ export default function StudentLessonChangePage() {
         showToast("변경 마감 시간이 지났어요. (수업 전날 17:00 이전까지만 가능)", "warn");
         return;
       }
+      if (isChangeQuotaExceeded) {
+        showToast("변경 가능 횟수를 모두 사용했어요.", "warn");
+        return;
+      }
       if (pendingByLesson.has(lesson.id)) {
         showToast("이미 처리 대기중(PENDING)인 요청이 있어요.", "warn");
         return;
@@ -619,19 +629,13 @@ export default function StudentLessonChangePage() {
 
       setOpen(true);
     },
-    [pendingByLesson, showToast, loadChangeOptionsForMonth]
+    [pendingByLesson, showToast, loadChangeOptionsForMonth, isChangeQuotaExceeded]
   );
 
   const timeOptions = useMemo(() => {
     if (!newDate) return [];
     return optionsByDate[newDate]?.times?.map((x) => x.time) ?? [];
   }, [newDate, optionsByDate]);
-
-  const roomOptions = useMemo(() => {
-    if (!newDate || !newTime) return [];
-    const slot = optionsByDate[newDate]?.times?.find((x) => x.time === newTime);
-    return slot?.rooms ?? [];
-  }, [newDate, newTime, optionsByDate]);
 
   useEffect(() => {
     if (!open) return;
@@ -650,6 +654,11 @@ export default function StudentLessonChangePage() {
 
     if (!canRequestChangeByCutoff(selected.lesson_date)) {
       showToast("변경 마감 시간이 지났어요. (수업 전날 17:00 이전까지만 가능)", "warn");
+      return;
+    }
+
+    if (isChangeQuotaExceeded) {
+      showToast("변경 가능 횟수를 모두 사용했어요.", "warn");
       return;
     }
 
@@ -672,16 +681,11 @@ export default function StudentLessonChangePage() {
 
     setActing(true);
 
-    const { error } = await supabase.from("lesson_change_requests").insert({
-      lesson_id: selected.id,
-      student_id: meId,
-      status: "PENDING" as Status,
-      request_type: "CHANGE" as RequestType,
-      reason: reason || null,
-      requested_changes: {
-        lesson_date: newDate,
-        lesson_time: `${newTime}:00`,
-      },
+    const { data, error } = await supabase.rpc("create_lesson_change_request_safe", {
+      p_lesson_id: selected.id,
+      p_new_date: newDate,
+      p_new_time: `${newTime}:00`,
+      p_reason: reason,
     });
 
     setActing(false);
@@ -689,6 +693,11 @@ export default function StudentLessonChangePage() {
     if (error) {
       const anyErr = error as any;
       showToast(translateError(anyErr.message, anyErr.code), "err");
+      return;
+    }
+
+    if (!data?.ok) {
+      showToast(translateError(String(data?.error ?? "")), "err");
       return;
     }
 
@@ -1005,7 +1014,8 @@ export default function StudentLessonChangePage() {
               const locked = !!l.change_locked;
 
               const deadlinePassed = !canRequestChangeByCutoff(l.lesson_date);
-              const btnDisabled = locked || acting || deadlinePassed || !!pending;
+              const btnDisabled =
+                locked || acting || deadlinePassed || !!pending || isChangeQuotaExceeded;
 
               return (
                 <div
@@ -1082,9 +1092,21 @@ export default function StudentLessonChangePage() {
                           borderColor: btnDisabled ? "#bbb" : "#111",
                           cursor: btnDisabled ? "not-allowed" : "pointer",
                         }}
-                        title={deadlinePassed ? "변경 마감: 수업 전날 17:00" : undefined}
+                        title={
+                          isChangeQuotaExceeded
+                            ? "변경권 소진"
+                            : deadlinePassed
+                            ? "변경 마감: 수업 전날 17:00"
+                            : undefined
+                        }
                       >
-                        {locked ? "변경 완료(재변경 불가)" : deadlinePassed ? "변경 마감(전날 17:00)" : "변경 요청"}
+                        {locked
+                          ? "변경 완료(재변경 불가)"
+                          : isChangeQuotaExceeded
+                          ? "변경권 소진"
+                          : deadlinePassed
+                          ? "변경 마감(전날 17:00)"
+                          : "변경 요청"}
                       </button>
 
                       {deadlinePassed && !locked ? (
@@ -1260,7 +1282,7 @@ export default function StudentLessonChangePage() {
             </div>
 
             <button
-              disabled={acting || optionsLoading}
+              disabled={acting || optionsLoading || isChangeQuotaExceeded}
               onClick={submitChangeRequest}
               style={{
                 ...btnPrimary(),
@@ -1268,12 +1290,18 @@ export default function StudentLessonChangePage() {
                 padding: "14px 12px",
                 borderRadius: 16,
                 marginTop: 14,
-                background: acting || optionsLoading ? "#bbb" : "#111",
-                borderColor: acting || optionsLoading ? "#bbb" : "#111",
-                cursor: acting || optionsLoading ? "not-allowed" : "pointer",
+                background: acting || optionsLoading || isChangeQuotaExceeded ? "#bbb" : "#111",
+                borderColor: acting || optionsLoading || isChangeQuotaExceeded ? "#bbb" : "#111",
+                cursor: acting || optionsLoading || isChangeQuotaExceeded ? "not-allowed" : "pointer",
               }}
             >
-              {optionsLoading ? "옵션 불러오는 중..." : acting ? "요청 중..." : "요청 보내기"}
+              {isChangeQuotaExceeded
+                ? "변경권 소진"
+                : optionsLoading
+                ? "옵션 불러오는 중..."
+                : acting
+                ? "요청 중..."
+                : "요청 보내기"}
             </button>
 
             <button
