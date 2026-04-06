@@ -152,6 +152,10 @@ export async function GET(req: Request) {
             id,
             student_id
           )
+        ),
+        student:profiles!practice_reservations_student_id_fkey (
+          id,
+          name
         )
       `
       )
@@ -340,8 +344,15 @@ export async function GET(req: Request) {
 
       const v = Array.isArray(r.voucher) ? r.voucher?.[0] : r.voucher;
       const c = v?.class ? (Array.isArray(v.class) ? v.class?.[0] : v.class) : null;
+      const s = Array.isArray(r.student) ? r.student?.[0] : r.student;
 
-      const studentId = c?.student_id ? String(c.student_id) : null;
+      // 🔥 핵심: reservation 기준 우선
+      const studentId =
+        s?.id
+          ? String(s.id)
+          : c?.student_id
+          ? String(c.student_id)
+          : null;
 
       const dateStr = String(r.date ?? "");
       const st = String(r.start_time ?? "");
