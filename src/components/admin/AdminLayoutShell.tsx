@@ -12,6 +12,7 @@ const items = [
   { href: "/admin/classes-list", label: "수강권 목록" },
   { href: "/admin/teachers", label: "강사 근무 시간 등록" },
   { href: "/admin/teachers/schedule", label: "강사 근무 현황" },
+  { href: "/admin/fixed-schedules", label: "고정 스케줄 슬롯" },
   { href: "/admin/lessons", label: "레슨 현황" },
   { href: "/admin/lesson-change-requests", label: "레슨변경 요청 관리" },
   { href: "/admin/practice-reservations", label: "연습실 요청 관리" },
