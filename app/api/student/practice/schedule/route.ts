@@ -35,7 +35,6 @@ export async function GET(req: Request) {
   const studentUserId = guard.studentUserId;
   const today = todayYmdKST();
 
-  // 1) 1차 병렬 조회
   const [
     { data: rooms, error: roomErr },
     { data: rawLessons, error: lErr },
@@ -43,7 +42,10 @@ export async function GET(req: Request) {
     { data: myClasses, error: cErr },
     { data: grantRows, error: grantErr },
   ] = await Promise.all([
-    supabaseServer.from("practice_rooms").select("id, name").order("name", { ascending: true }),
+    supabaseServer
+      .from("practice_rooms")
+      .select("id, name")
+      .order("name", { ascending: true }),
 
     supabaseServer
       .from("lessons")
@@ -60,11 +62,14 @@ export async function GET(req: Request) {
       .gte("date", from)
       .lte("date", to),
 
-    supabaseServer.from("classes").select("id").eq("student_id", studentUserId),
+    supabaseServer
+      .from("classes")
+      .select("id")
+      .eq("student_id", studentUserId),
 
     supabaseServer
       .from("practice_credit_grants")
-      .select("grant_type, remaining_hours")
+      .select("grant_type, hours")
       .eq("student_id", studentUserId),
   ]);
 
@@ -105,17 +110,20 @@ export async function GET(req: Request) {
 
   const classIds = (myClasses ?? []).map((x: any) => String(x.id)).filter(Boolean);
 
-  const extraFreeHours = (grantRows ?? [])
+  const freeHours = (grantRows ?? [])
     .filter((x: any) => String(x.grant_type) === "ADMIN_ADD")
-    .reduce((sum: number, x: any) => sum + Number(x.remaining_hours ?? 0), 0);
+    .reduce((sum: number, x: any) => sum + Number(x.hours ?? 0), 0);
 
   const paidHours = (grantRows ?? [])
     .filter((x: any) => String(x.grant_type) === "PURCHASE")
-    .reduce((sum: number, x: any) => sum + Number(x.remaining_hours ?? 0), 0);
+    .reduce((sum: number, x: any) => sum + Number(x.hours ?? 0), 0);
 
-  // 내 예약 목록(현재 조회 범위 기준) 재사용
   const myReservationsInRange = (rawResv ?? [])
-    .filter((r: any) => String(r.student_id) === studentUserId && String(r.status).toUpperCase() !== "CANCELED")
+    .filter(
+      (r: any) =>
+        String(r.student_id) === studentUserId &&
+        String(r.status).toUpperCase() !== "CANCELED"
+    )
     .map((r: any) => ({
       id: r.id,
       student_id: r.student_id,
@@ -131,10 +139,10 @@ export async function GET(req: Request) {
       created_at: r.created_at,
     }));
 
-  // 수강권 없을 때도 추가 무료 / 유료 시간은 보여줌
   if (classIds.length === 0) {
-    const baseRemainingHours = 0;
-    const totalRemainingHours = baseRemainingHours + extraFreeHours + paidHours;
+    const initialHours = 0;
+    const remainingHours = Math.max(0, freeHours + paidHours);
+    const usedHours = Math.max(0, initialHours + freeHours + paidHours - remainingHours);
 
     return json({
       ok: true,
@@ -146,29 +154,29 @@ export async function GET(req: Request) {
       my_reservations_in_voucher: myReservationsInRange,
       voucher_summary: {
         today,
-        remaining_hours: baseRemainingHours,
-        base_remaining_hours: baseRemainingHours,
-        extra_free_hours: extraFreeHours,
+        remaining_hours: remainingHours,
+        initial_hours: initialHours,
+        free_hours: freeHours,
         paid_hours: paidHours,
-        total_remaining_hours: totalRemainingHours,
         usable_until: null,
         usable_from: null,
-        has_voucher: totalRemainingHours > 0,
+        has_voucher: remainingHours > 0,
         active_voucher_ids: [],
       },
       debug: {
         classIdsCount: 0,
-        extraFreeHours,
+        initialHours,
+        freeHours,
         paidHours,
-        totalRemainingHours,
+        usedHours,
+        remainingHours,
       },
     });
   }
 
-  // 2) voucher 조회
   const { data: vouchers, error: vErr } = await supabaseServer
     .from("practice_vouchers")
-    .select("id, class_id, quantity, valid_from, valid_until")
+    .select("id, class_id, quantity, initial_hours, valid_from, valid_until")
     .in("class_id", classIds)
     .order("valid_from", { ascending: true });
 
@@ -178,6 +186,7 @@ export async function GET(req: Request) {
     id: String(v.id),
     class_id: String(v.class_id),
     quantity: Number(v.quantity ?? 0),
+    initial_hours: Number(v.initial_hours ?? 0),
     valid_from: v.valid_from ? String(v.valid_from) : null,
     valid_until: v.valid_until ? String(v.valid_until) : null,
   }));
@@ -194,7 +203,9 @@ export async function GET(req: Request) {
   let picked: any | null = null;
 
   if (activeOnes.length > 0) {
-    picked = activeOnes.sort((a, b) => String(a.valid_until).localeCompare(String(b.valid_until)))[0];
+    picked = activeOnes.sort((a, b) =>
+      String(a.valid_until).localeCompare(String(b.valid_until))
+    )[0];
   } else {
     const upcoming = vv
       .filter((v) => v.valid_from && v.valid_from > today)
@@ -203,37 +214,40 @@ export async function GET(req: Request) {
     picked = upcoming.length > 0 ? upcoming[0] : null;
   }
 
-  const baseRemainingHours = picked ? Number(picked.quantity ?? 0) : 0;
-  const totalRemainingHours = baseRemainingHours + extraFreeHours + paidHours;
+  const initialHours = picked ? Number(picked.initial_hours ?? 0) : 0;
+  const remainingHours = picked
+    ? Number(picked.quantity ?? 0)
+    : Math.max(0, freeHours + paidHours);
+
+  const usedHours = Math.max(
+    0,
+    initialHours + freeHours + paidHours - remainingHours
+  );
 
   const voucher_summary = picked
     ? {
         today,
-        remaining_hours: baseRemainingHours,
-        base_remaining_hours: baseRemainingHours,
-        extra_free_hours: extraFreeHours,
+        remaining_hours: remainingHours,
+        initial_hours: initialHours,
+        free_hours: freeHours,
         paid_hours: paidHours,
-        total_remaining_hours: totalRemainingHours,
         usable_from: picked.valid_from,
         usable_until: picked.valid_until,
-        has_voucher: totalRemainingHours > 0,
+        has_voucher: remainingHours > 0,
         active_voucher_ids: [picked.id],
       }
     : {
         today,
-        remaining_hours: 0,
-        base_remaining_hours: 0,
-        extra_free_hours: extraFreeHours,
+        remaining_hours: Math.max(0, freeHours + paidHours),
+        initial_hours: 0,
+        free_hours: freeHours,
         paid_hours: paidHours,
-        total_remaining_hours: totalRemainingHours,
         usable_until: null,
         usable_from: null,
-        has_voucher: totalRemainingHours > 0,
+        has_voucher: Math.max(0, freeHours + paidHours) > 0,
         active_voucher_ids: [],
       };
 
-  // 3) 상단 예약내역용
-  // 현재 조회범위의 내 예약을 재사용하되, voucher 기간 밖이면 필터
   let my_reservations_in_voucher: any[] = [];
 
   if (voucher_summary.usable_until) {
@@ -261,9 +275,11 @@ export async function GET(req: Request) {
       classIdsCount: classIds.length,
       vouchersCount: (vouchers ?? []).length,
       pickedVoucherId: picked?.id ?? null,
-      extraFreeHours,
+      initialHours,
+      freeHours,
       paidHours,
-      totalRemainingHours,
+      usedHours,
+      remainingHours,
     },
   });
 }

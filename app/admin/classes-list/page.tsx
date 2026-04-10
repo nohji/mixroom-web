@@ -657,8 +657,9 @@ export default function AdminClassesListPage() {
                 lineHeight: "18px",
               }}
             >
-              이 작업은 되돌릴 수 없어요. classes + lessons + lesson_change_requests가 함께 삭제됩니다.
-            </div>
+              이 작업은 되돌릴 수 없어요.
+              수강권 + 레슨 + 변경요청 + 연습실 이용권/예약/크레딧 기록까지 모두 삭제됩니다.
+               </div>
 
             {deletingRow && (
               <div

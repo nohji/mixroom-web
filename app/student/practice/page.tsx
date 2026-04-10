@@ -127,11 +127,9 @@ type VoucherSummary = {
   usable_from?: string | null;
   has_voucher?: boolean;
   active_voucher_ids?: string[];
-  base_remaining_hours?: number;
-  extra_free_hours?: number;
+  initial_hours?: number;
+  free_hours?: number;
   paid_hours?: number;
-  total_remaining_hours?: number;
-  extra_usable?: boolean;
 };
 
 function inRangeDate(d: string, from?: string | null, to?: string | null) {
@@ -220,15 +218,15 @@ export default function PracticeStudentPage() {
   const voucherTo = useMemo(() => voucherSummary?.usable_until ?? null, [voucherSummary]);
 
   const totalRemainingHours = useMemo(() => {
-    return Number(voucherSummary?.total_remaining_hours ?? voucherSummary?.remaining_hours ?? 0);
+    return Number(voucherSummary?.remaining_hours ?? 0);
   }, [voucherSummary]);
 
-  const baseRemainingHours = useMemo(() => {
-    return Number(voucherSummary?.base_remaining_hours ?? voucherSummary?.remaining_hours ?? 0);
+  const initialHours = useMemo(() => {
+    return Number(voucherSummary?.initial_hours ?? 0);
   }, [voucherSummary]);
 
-  const extraFreeHours = useMemo(() => {
-    return Number(voucherSummary?.extra_free_hours ?? 0);
+  const freeHours = useMemo(() => {
+    return Number(voucherSummary?.free_hours ?? 0);
   }, [voucherSummary]);
 
   const paidHours = useMemo(() => {
@@ -906,13 +904,13 @@ export default function PracticeStudentPage() {
 
           <div style={{ display: "grid", gap: 6, padding: "10px 12px", borderRadius: 12, background: "#f8fafc" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <div style={{ color: "#666", fontWeight: 1000 }}>기본 무료</div>
-              <div style={{ color: "#111", fontWeight: 1100 }}>{baseRemainingHours}시간</div>
+              <div style={{ color: "#666", fontWeight: 1000 }}>기본제공</div>
+              <div style={{ color: "#111", fontWeight: 1100 }}>{initialHours}시간</div>
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <div style={{ color: "#666", fontWeight: 1000 }}>추가 무료</div>
-              <div style={{ color: "#111", fontWeight: 1100 }}>{extraFreeHours}시간</div>
+              <div style={{ color: "#666", fontWeight: 1000 }}>무료</div>
+              <div style={{ color: "#111", fontWeight: 1100 }}>{freeHours}시간</div>
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -1016,7 +1014,7 @@ export default function PracticeStudentPage() {
                     showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
                     return;
                   }
-                  
+
                   if (outOfClosedDay) {
                     showToast("매주 목요일은 휴무입니다.", "warn");
                     return;

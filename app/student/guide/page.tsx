@@ -67,6 +67,10 @@ export default function StudentGuidePage() {
         </Item>
 
         <Item>
+          <b>4회차 레슨은 변경 시 이전 일정</b>으로만 변경 가능하므로, 사전 변경 요청 부탁드립니다.
+        </Item>
+
+        <Item>
           문의사항은 <b>카카오톡 채널 ‘믹스룸 스튜디오’</b>로 편하게 연락 주세요.
         </Item>
       </Section>

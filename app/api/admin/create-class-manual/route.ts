@@ -341,7 +341,10 @@ export async function POST(req: Request) {
     student_id: studentId,
     class_id: classId,
     voucher_type: "free",
-    quantity: qty,
+  
+    quantity: qty,        // 현재 잔여
+    initial_hours: qty,   // 🔥 최초제공 추가
+  
     valid_from: startDate,
     valid_until: endDate,
     cancel_limit_days: 3,

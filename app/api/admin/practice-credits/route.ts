@@ -8,7 +8,7 @@ export async function GET() {
 
     const sb = supabaseServer;
 
-    const { data, error } = await sb.rpc("admin_list_practice_credit_summary");
+    const { data, error } = await sb.rpc("admin_list_practice_credit_summary_v2");
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
