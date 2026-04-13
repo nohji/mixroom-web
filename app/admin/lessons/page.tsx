@@ -162,7 +162,7 @@ export default function AdminLessonsHallSheetPage() {
 
   const TIME_W = isMobile ? 76 : 88;
   const AVAIL_W = isMobile ? 0 : 58;
-  const COL_W = isMobile ? 74 : 84;
+  const COL_W = isMobile ? 74 : 96;
 
   const HEAD_H1 = isMobile ? 44 : 46;
   const HEAD_H2 = isMobile ? 38 : 40;
@@ -236,6 +236,11 @@ export default function AdminLessonsHallSheetPage() {
   const [feReason, setFeReason] = useState<string>("");
 
   const [practiceCanceling, setPracticeCanceling] = useState(false);
+
+  const [practiceEditOpen, setPracticeEditOpen] = useState(false);
+  const [practiceSaving, setPracticeSaving] = useState(false);  
+  const [peRoomId, setPeRoomId] = useState("");
+  const [peReason, setPeReason] = useState(""); 
 
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockSaving, setBlockSaving] = useState(false);
@@ -542,6 +547,53 @@ export default function AdminLessonsHallSheetPage() {
     alert("연습실 예약 취소 완료");
     setPracticeCanceling(false);
     setSelectedPracticeId("");
+    await load();
+  };
+
+  const openPracticeEdit = async () => {
+    if (!selectedPractice || selectedPracticeIsAdminBlock) return;
+  
+    if (roomsAll.length === 0) {
+      await loadMeta();
+    }
+  
+    setPeRoomId(selectedPractice.room_id ?? "");
+    setPeReason("");
+    setPracticeEditOpen(true);
+  };
+  
+  const savePracticeRoomChange = async () => {
+    if (!selectedPractice) return;
+  
+    if (!peRoomId) {
+      alert("변경할 홀을 선택해줘.");
+      return;
+    }
+  
+    setPracticeSaving(true);
+  
+    const res = await authFetch(
+      `/api/admin/practice-reservations/${selectedPractice.id}/change-room`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          room_id: peRoomId,
+          reason: peReason || null,
+        }),
+      }
+    );
+  
+    const json = await res.json().catch(() => ({}));
+  
+    if (!res.ok) {
+      alert(json.error ?? "홀 변경 실패");
+      setPracticeSaving(false);
+      return;
+    }
+  
+    alert("홀 변경 완료");
+    setPracticeSaving(false);
+    setPracticeEditOpen(false);
     await load();
   };
 
@@ -1564,7 +1616,7 @@ export default function AdminLessonsHallSheetPage() {
                     color: mainIsCanceled ? "#111" : "#fff",
                     cursor: "pointer",
                     textAlign: "left",
-                    padding: isMobile ? "5px 6px" : "8px 10px",
+                    padding: isMobile ? "5px 6px" : "6px 8px",
                     display: "flex",
                     alignItems: "center",
                     boxShadow: isSelected ? "0 6px 18px rgba(0,0,0,0.18)" : "none",
@@ -1660,28 +1712,45 @@ export default function AdminLessonsHallSheetPage() {
                       gap: 6,
                     }}
                   >
-                    {mainIsCanceled ? (
-                      <>
-                        {!isMobile && (
-                          <span
-                            style={{
-                              display: "inline-block",
-                              padding: "2px 8px",
-                              borderRadius: 999,
-                              border: "1px solid rgba(0,0,0,0.25)",
-                              background: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                              fontWeight: 1100,
-                            }}
-                          >
-                            취소
-                          </span>
-                        )}
-                        <span style={{ fontWeight: 1000, color: "#111" }}>{l.student_name}</span>
-                      </>
-                    ) : (
-                      <span style={{ fontWeight: 1000, color: "#111" }}>{l.student_name}</span>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      minWidth: 0,
+                      width: "100%",
+                    }}
+                  >
+                    {/* 이름 */}
+                    <span
+                      style={{
+                        fontWeight: 1000,
+                        color: "#111",
+                        fontSize: isMobile ? 10 : 13,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {l.student_name}
+                    </span>
+
+                    {/* 회차 */}
+                    {l.lesson_nth && (
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: isMobile ? 10 : 11,
+                          fontWeight: 900,
+                          color: "#111",
+                          background: "rgba(0,0,0,0.06)",
+                          borderRadius: 6,
+                          padding: "1px 2px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {l.lesson_nth}/{l.total_lessons}
+                      </span>
                     )}
+                  </div>
                   </div>
                 </button>
               );
@@ -1790,14 +1859,32 @@ export default function AdminLessonsHallSheetPage() {
                 </b>
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  {selectedPracticeIsAdminBlock ? (
+                {selectedPracticeIsAdminBlock ? (
+                  <button
+                    onClick={cancelAdminBlock}
+                    disabled={practiceCanceling}
+                    style={{
+                      border: "1px solid #b91c1c",
+                      background: "#fff5f5",
+                      color: "#b91c1c",
+                      borderRadius: 10,
+                      padding: "6px 10px",
+                      cursor: practiceCanceling ? "not-allowed" : "pointer",
+                      fontWeight: 900,
+                      opacity: practiceCanceling ? 0.7 : 1,
+                    }}
+                  >
+                    {practiceCanceling ? "차단 해제 중..." : "운영 차단 해제"}
+                  </button>
+                ) : (
+                  <>
                     <button
-                      onClick={cancelAdminBlock}
+                      onClick={openPracticeEdit}
                       disabled={practiceCanceling}
                       style={{
-                        border: "1px solid #b91c1c",
-                        background: "#fff5f5",
-                        color: "#b91c1c",
+                        border: "1px solid #111",
+                        background: "#111",
+                        color: "#fff",
                         borderRadius: 10,
                         padding: "6px 10px",
                         cursor: practiceCanceling ? "not-allowed" : "pointer",
@@ -1805,9 +1892,9 @@ export default function AdminLessonsHallSheetPage() {
                         opacity: practiceCanceling ? 0.7 : 1,
                       }}
                     >
-                      {practiceCanceling ? "차단 해제 중..." : "운영 차단 해제"}
+                      홀 변경
                     </button>
-                  ) : (
+
                     <button
                       onClick={cancelPracticeReservation}
                       disabled={practiceCanceling}
@@ -1824,22 +1911,23 @@ export default function AdminLessonsHallSheetPage() {
                     >
                       {practiceCanceling ? "취소 처리 중..." : "연습실 예약 취소"}
                     </button>
-                  )}
+                  </>
+                )}
 
-                  <button
-                    onClick={() => setSelectedPracticeId("")}
-                    style={{
-                      border: "1px solid #ddd",
-                      background: "#fff",
-                      borderRadius: 10,
-                      padding: "6px 10px",
-                      cursor: "pointer",
-                      fontWeight: 900,
-                    }}
-                  >
-                    선택 해제
-                  </button>
-                </div>
+                <button
+                  onClick={() => setSelectedPracticeId("")}
+                  style={{
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                    borderRadius: 10,
+                    padding: "6px 10px",
+                    cursor: "pointer",
+                    fontWeight: 900,
+                  }}
+                >
+                  선택 해제
+                </button>
+              </div>
               </div>
 
               <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 13 }}>
@@ -2261,6 +2349,153 @@ export default function AdminLessonsHallSheetPage() {
           </div>
         </div>
       )}
+
+  {practiceEditOpen && selectedPractice && !selectedPracticeIsAdminBlock && (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+        padding: 16,
+      }}
+      onClick={() => !practiceSaving && setPracticeEditOpen(false)}
+    >
+      <div
+        style={{
+          width: "min(520px, 96vw)",
+          borderRadius: 14,
+          background: "#fff",
+          border: "1px solid #eee",
+          padding: 14,
+          boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ fontWeight: 1100, fontSize: 14 }}>연습실 홀 변경</div>
+          <button
+            onClick={() => setPracticeEditOpen(false)}
+            disabled={practiceSaving}
+            style={{
+              border: "1px solid #ddd",
+              background: "#fff",
+              borderRadius: 10,
+              padding: "6px 10px",
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            닫기
+          </button>
+        </div>
+
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 12,
+            color: "#666",
+            fontWeight: 900,
+            lineHeight: "18px",
+          }}
+        >
+          날짜와 시간은 유지하고 홀만 변경합니다.
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          <div
+            style={{
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid #eee",
+              background: "#fafafa",
+              fontSize: 12,
+              lineHeight: "18px",
+            }}
+          >
+            <div><b>학생</b>: {selectedPractice.student_name}</div>
+            <div>
+              <b>시간</b>: {selectedPractice.date} {clampHHMM(selectedPractice.start_time ?? "")} ~ {clampHHMM(selectedPractice.end_time ?? "")}
+            </div>
+            <div><b>현재 홀</b>: {normalizeRoom(selectedPractice.room_name)}홀</div>
+          </div>
+
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>변경할 홀</div>
+            <select
+              value={peRoomId}
+              onChange={(e) => setPeRoomId(e.target.value)}
+              disabled={practiceSaving || metaLoading}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                fontWeight: 900,
+              }}
+            >
+              <option value="">홀 선택</option>
+              {roomsAll.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>사유</div>
+            <input
+              value={peReason}
+              onChange={(e) => setPeReason(e.target.value)}
+              disabled={practiceSaving}
+              placeholder="예: 운영상 조정 / 학생 요청"
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                fontWeight: 900,
+              }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            onClick={() => setPracticeEditOpen(false)}
+            disabled={practiceSaving}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              background: "#fff",
+              cursor: "pointer",
+              fontWeight: 1000,
+            }}
+          >
+            취소
+          </button>
+          <button
+            onClick={savePracticeRoomChange}
+            disabled={practiceSaving}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #111",
+              background: "#111",
+              color: "#fff",
+              cursor: "pointer",
+              fontWeight: 1100,
+            }}
+          >
+            {practiceSaving ? "저장 중..." : "홀 변경 저장"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
     </AdminLayoutShell>
   );
 }
