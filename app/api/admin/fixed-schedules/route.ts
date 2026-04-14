@@ -15,6 +15,7 @@ export async function GET() {
         id,
         student_id,
         teacher_id,
+        room_id,
         weekday,
         lesson_time,
         hold_for_renewal,
@@ -26,6 +27,10 @@ export async function GET() {
           name
         ),
         teacher:profiles!fixed_schedule_slots_teacher_id_fkey (
+          id,
+          name
+        ),
+        room:practice_rooms!fixed_schedule_slots_room_id_fkey (
           id,
           name
         )
@@ -55,6 +60,7 @@ export async function POST(req: Request) {
 
     const student_id = String(body.student_id ?? "").trim();
     const teacher_id = String(body.teacher_id ?? "").trim();
+    const room_id = body.room_id ? String(body.room_id).trim() : null;
     const weekday = Number(body.weekday);
     const lesson_time = String(body.lesson_time ?? "").trim();
     const hold_for_renewal = body.hold_for_renewal ?? true;
@@ -74,17 +80,54 @@ export async function POST(req: Request) {
     const normalizedTime =
       lesson_time.length === 5 ? `${lesson_time}:00` : lesson_time;
 
+    // room_id가 있으면 실제 존재하는 홀인지 확인
+    if (room_id) {
+      const { data: room, error: roomErr } = await supabaseServer
+        .from("practice_rooms")
+        .select("id")
+        .eq("id", room_id)
+        .single();
+
+      if (roomErr || !room) {
+        return NextResponse.json({ error: "invalid room_id" }, { status: 400 });
+      }
+    }
+
     const { data, error } = await supabaseServer
       .from("fixed_schedule_slots")
       .insert({
         student_id,
         teacher_id,
+        room_id,
         weekday,
         lesson_time: normalizedTime,
         hold_for_renewal,
         memo,
       })
-      .select()
+      .select(`
+        id,
+        student_id,
+        teacher_id,
+        room_id,
+        weekday,
+        lesson_time,
+        hold_for_renewal,
+        memo,
+        created_at,
+        updated_at,
+        student:profiles!fixed_schedule_slots_student_id_fkey (
+          id,
+          name
+        ),
+        teacher:profiles!fixed_schedule_slots_teacher_id_fkey (
+          id,
+          name
+        ),
+        room:practice_rooms!fixed_schedule_slots_room_id_fkey (
+          id,
+          name
+        )
+      `)
       .single();
 
     if (error) {

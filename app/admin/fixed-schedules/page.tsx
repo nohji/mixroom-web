@@ -17,10 +17,16 @@ type NameRel =
   | { id: string; name: string | null }[]
   | null;
 
+type RoomRel =
+  | { id: string; name: string | null }
+  | { id: string; name: string | null }[]
+  | null;
+
 type FixedScheduleRow = {
   id: string;
   student_id: string;
   teacher_id: string;
+  room_id: string | null;
   weekday: number;
   lesson_time: string;
   hold_for_renewal: boolean;
@@ -29,6 +35,7 @@ type FixedScheduleRow = {
   updated_at?: string;
   student: NameRel;
   teacher: NameRel;
+  room: RoomRel;
 };
 
 type UserRow = {
@@ -36,6 +43,11 @@ type UserRow = {
   name: string | null;
   phone: string | null;
   role: string;
+};
+
+type RoomRow = {
+  id: string;
+  name: string | null;
 };
 
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
@@ -51,6 +63,12 @@ function buildTimeOptions(startHour = 9, endHour = 23) {
 function pickName(x: NameRel) {
   if (!x) return "-";
   return Array.isArray(x) ? x[0]?.name ?? "-" : x.name ?? "-";
+}
+
+function pickRoomName(x: RoomRel) {
+  if (!x) return "전체";
+  const name = Array.isArray(x) ? x[0]?.name ?? null : x.name ?? null;
+  return name?.trim() || "전체";
 }
 
 function hhmm(v: string) {
@@ -75,6 +93,7 @@ export default function AdminFixedSchedulesPage() {
   const [items, setItems] = useState<FixedScheduleRow[]>([]);
   const [students, setStudents] = useState<UserRow[]>([]);
   const [teachers, setTeachers] = useState<UserRow[]>([]);
+  const [rooms, setRooms] = useState<RoomRow[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -85,6 +104,7 @@ export default function AdminFixedSchedulesPage() {
 
   const [studentId, setStudentId] = useState("");
   const [teacherId, setTeacherId] = useState("");
+  const [roomId, setRoomId] = useState(""); // "" = 전체보호
   const [weekday, setWeekday] = useState(1);
   const [lessonTime, setLessonTime] = useState("19:00");
   const [holdForRenewal, setHoldForRenewal] = useState(true);
@@ -92,6 +112,9 @@ export default function AdminFixedSchedulesPage() {
 
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null);
   const [editingMemoValue, setEditingMemoValue] = useState("");
+
+  const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
+  const [editingRoomValue, setEditingRoomValue] = useState("");
 
   const timeOptions = useMemo(() => buildTimeOptions(9, 23), []);
 
@@ -114,6 +137,12 @@ export default function AdminFixedSchedulesPage() {
     );
   }, [teachers]);
 
+  const sortedRooms = useMemo(() => {
+    return [...rooms].sort((a, b) =>
+      String(a.name ?? "").localeCompare(String(b.name ?? ""), "ko")
+    );
+  }, [rooms]);
+
   const protectedCount = useMemo(
     () => items.filter((x) => x.hold_for_renewal).length,
     [items]
@@ -122,22 +151,27 @@ export default function AdminFixedSchedulesPage() {
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
-      const [studentRes, teacherRes] = await Promise.all([
+      const [studentRes, teacherRes, roomRes] = await Promise.all([
         authFetch("/api/admin/list-users?role=student"),
         authFetch("/api/admin/list-users?role=teacher"),
+        authFetch("/api/admin/meta"),
       ]);
 
       const studentJson = await studentRes.json().catch(() => ({}));
       const teacherJson = await teacherRes.json().catch(() => ({}));
+      const roomJson = await roomRes.json().catch(() => ({}));
 
       if (!studentRes.ok) throw new Error(studentJson.error ?? "수강생 조회 실패");
       if (!teacherRes.ok) throw new Error(teacherJson.error ?? "강사 조회 실패");
+      if (!roomRes.ok) throw new Error(roomJson.error ?? "룸 조회 실패");
 
       const studentRows = (studentJson.rows ?? []) as UserRow[];
       const teacherRows = (teacherJson.rows ?? []) as UserRow[];
+      const roomRows = (roomJson.rooms ?? []) as RoomRow[];
 
       setStudents(studentRows.filter((x) => x.role === "student"));
       setTeachers(teacherRows.filter((x) => x.role === "teacher"));
+      setRooms(roomRows);
 
       if (!studentId && studentRows.length > 0) setStudentId(String(studentRows[0].id));
       if (!teacherId && teacherRows.length > 0) setTeacherId(String(teacherRows[0].id));
@@ -186,6 +220,7 @@ export default function AdminFixedSchedulesPage() {
         body: JSON.stringify({
           student_id: studentId,
           teacher_id: teacherId,
+          room_id: roomId || null,
           weekday,
           lesson_time: lessonTime,
           hold_for_renewal: holdForRenewal,
@@ -197,6 +232,7 @@ export default function AdminFixedSchedulesPage() {
       if (!res.ok) throw new Error(json.error ?? "등록 실패");
 
       setMemo("");
+      setRoomId("");
       setCreateMsg("고정 슬롯 등록 완료");
       await loadItems();
     } catch (e: any) {
@@ -208,7 +244,11 @@ export default function AdminFixedSchedulesPage() {
 
   const patchSlot = async (
     id: string,
-    patch: { memo?: string | null; hold_for_renewal?: boolean }
+    patch: {
+      memo?: string | null;
+      hold_for_renewal?: boolean;
+      room_id?: string | null;
+    }
   ) => {
     setSaving(true);
     setMsg("");
@@ -251,6 +291,8 @@ export default function AdminFixedSchedulesPage() {
   };
 
   const startEditMemo = (row: FixedScheduleRow) => {
+    setEditingRoomId(null);
+    setEditingRoomValue("");
     setEditingMemoId(row.id);
     setEditingMemoValue(row.memo ?? "");
   };
@@ -259,6 +301,19 @@ export default function AdminFixedSchedulesPage() {
     await patchSlot(id, { memo: editingMemoValue || null });
     setEditingMemoId(null);
     setEditingMemoValue("");
+  };
+
+  const startEditRoom = (row: FixedScheduleRow) => {
+    setEditingMemoId(null);
+    setEditingMemoValue("");
+    setEditingRoomId(row.id);
+    setEditingRoomValue(row.room_id ?? "");
+  };
+
+  const saveRoom = async (id: string) => {
+    await patchSlot(id, { room_id: editingRoomValue || null });
+    setEditingRoomId(null);
+    setEditingRoomValue("");
   };
 
   return (
@@ -270,7 +325,7 @@ export default function AdminFixedSchedulesPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(6, minmax(0, 1fr))",
               gap: 10,
               marginTop: 12,
             }}
@@ -314,6 +369,22 @@ export default function AdminFixedSchedulesPage() {
                     </option>
                   ))
                 )}
+              </select>
+            </Field>
+
+            <Field label="홀 보호 범위">
+              <select
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                style={{ ...inputStyle, width: "100%" }}
+                disabled={loadingUsers}
+              >
+                <option value="">전체 보호</option>
+                {sortedRooms.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name ?? "이름없음"}
+                  </option>
+                ))}
               </select>
             </Field>
 
@@ -371,7 +442,7 @@ export default function AdminFixedSchedulesPage() {
               <input
                 value={memo}
                 onChange={(e) => setMemo(e.target.value)}
-                placeholder="예: 기존 고정반 / 재등록 우선 보호"
+                placeholder="예: 기존 고정반 / 재등록 우선 보호 / A홀만 보호"
                 style={{ ...inputStyle, width: "100%" }}
               />
             </Field>
@@ -470,12 +541,48 @@ export default function AdminFixedSchedulesPage() {
                   </div>
 
                   <div style={{ fontSize: 13, color: colors.textSub, lineHeight: 1.7 }}>
+                    보호 범위: {pickRoomName(row.room)}
+                    <br />
                     보호 상태: {row.hold_for_renewal ? "보호중" : "비보호"}
                     <br />
                     메모: {row.memo ?? "-"}
                   </div>
 
-                  {editingMemoId === row.id ? (
+                  {editingRoomId === row.id ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <select
+                        value={editingRoomValue}
+                        onChange={(e) => setEditingRoomValue(e.target.value)}
+                        style={{ ...inputStyle, width: "100%" }}
+                      >
+                        <option value="">전체 보호</option>
+                        {sortedRooms.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name ?? "이름없음"}
+                          </option>
+                        ))}
+                      </select>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          style={secondaryButton}
+                          onClick={() => saveRoom(row.id)}
+                          disabled={saving}
+                        >
+                          홀 저장
+                        </button>
+                        <button
+                          style={secondaryButton}
+                          onClick={() => {
+                            setEditingRoomId(null);
+                            setEditingRoomValue("");
+                          }}
+                          disabled={saving}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  ) : editingMemoId === row.id ? (
                     <div style={{ display: "grid", gap: 8 }}>
                       <input
                         value={editingMemoValue}
@@ -518,6 +625,14 @@ export default function AdminFixedSchedulesPage() {
 
                       <button
                         style={secondaryButton}
+                        onClick={() => startEditRoom(row)}
+                        disabled={saving}
+                      >
+                        홀변경
+                      </button>
+
+                      <button
+                        style={secondaryButton}
                         onClick={() => startEditMemo(row)}
                         disabled={saving}
                       >
@@ -538,10 +653,10 @@ export default function AdminFixedSchedulesPage() {
             </div>
           ) : (
             <div style={{ marginTop: 14, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
                 <thead>
                   <tr>
-                    {["학생", "강사", "요일", "시간", "보호", "메모", "액션"].map((h) => (
+                    {["학생", "강사", "보호범위", "요일", "시간", "보호", "메모", "액션"].map((h) => (
                       <th
                         key={h}
                         style={{
@@ -562,6 +677,43 @@ export default function AdminFixedSchedulesPage() {
                     <tr key={row.id}>
                       <td style={td}>{pickName(row.student)}</td>
                       <td style={td}>{pickName(row.teacher)}</td>
+                      <td style={td}>
+                        {editingRoomId === row.id ? (
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <select
+                              value={editingRoomValue}
+                              onChange={(e) => setEditingRoomValue(e.target.value)}
+                              style={{ ...inputStyle, minWidth: 180 }}
+                            >
+                              <option value="">전체 보호</option>
+                              {sortedRooms.map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.name ?? "이름없음"}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              style={secondaryButton}
+                              onClick={() => saveRoom(row.id)}
+                              disabled={saving}
+                            >
+                              저장
+                            </button>
+                            <button
+                              style={secondaryButton}
+                              onClick={() => {
+                                setEditingRoomId(null);
+                                setEditingRoomValue("");
+                              }}
+                              disabled={saving}
+                            >
+                              취소
+                            </button>
+                          </div>
+                        ) : (
+                          pickRoomName(row.room)
+                        )}
+                      </td>
                       <td style={td}>{DOW[row.weekday] ?? row.weekday}</td>
                       <td style={td}>{hhmm(row.lesson_time)}</td>
                       <td style={td}>{row.hold_for_renewal ? "보호중" : "비보호"}</td>
@@ -596,7 +748,7 @@ export default function AdminFixedSchedulesPage() {
                         )}
                       </td>
                       <td style={td}>
-                        {editingMemoId !== row.id && (
+                        {editingMemoId !== row.id && editingRoomId !== row.id && (
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button
                               style={secondaryButton}
@@ -608,6 +760,14 @@ export default function AdminFixedSchedulesPage() {
                               disabled={saving}
                             >
                               {row.hold_for_renewal ? "보호해제" : "보호적용"}
+                            </button>
+
+                            <button
+                              style={secondaryButton}
+                              onClick={() => startEditRoom(row)}
+                              disabled={saving}
+                            >
+                              홀변경
                             </button>
 
                             <button

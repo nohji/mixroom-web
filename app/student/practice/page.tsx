@@ -72,6 +72,9 @@ function mapPracticeError(code: string) {
   if (code.includes("TOO_FAR")) {
     return "연습실 예약은 최대 30일 뒤까지만 가능합니다.";
   }
+  if (code.includes("PROTECTED_SLOT")) {
+    return "해당 시간/홀은 보호된 고정 스케줄이 있어 예약할 수 없습니다.";
+  }
 
   return "예약 처리 중 오류가 발생했습니다.";
 }
@@ -94,10 +97,20 @@ type ReservationRow = {
   date: string;
   start_time: string;
   end_time: string;
-  status: string; // PENDING/APPROVED/REJECTED/CANCELED/COMPLETED
+  status: string;
   room_name?: string | null;
   rejected_reason?: string | null;
   approved_at?: string | null;
+};
+
+type ProtectedSlotRow = {
+  id: string;
+  date: string;
+  weekday: number;
+  lesson_time: string;
+  room_id: string | null;
+  room_name: string | null;
+  memo: string | null;
 };
 
 function isActiveReservationStatus(status: string) {
@@ -170,6 +183,25 @@ function isClosedWeekday(dateStr: string) {
   return parseYmd(dateStr).getDay() === 4; // 목요일
 }
 
+function isProtectedSlot(
+  protectedSlots: ProtectedSlotRow[],
+  rooms: any[],
+  dateStr: string,
+  time: string,
+  room: string
+) {
+  const roomObj = rooms.find((r) => normalizeRoom(r.name) === room);
+  const roomId = roomObj?.id ? String(roomObj.id) : null;
+
+  return protectedSlots.some((p) => {
+    const sameDate = p.date === dateStr;
+    const sameTime = clampHHMM(p.lesson_time) === time;
+    const wholeProtected = p.room_id == null;
+    const sameRoom = roomId && String(p.room_id) === roomId;
+    return sameDate && sameTime && (wholeProtected || sameRoom);
+  });
+}
+
 export default function PracticeStudentPage() {
   const initialPolicyRange = getPracticeReservePolicyRange();
 
@@ -180,6 +212,7 @@ export default function PracticeStudentPage() {
   const [rooms, setRooms] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
   const [reservations, setReservations] = useState<ReservationRow[]>([]);
+  const [protectedSlots, setProtectedSlots] = useState<ProtectedSlotRow[]>([]);
   const [myVoucherReservations, setMyVoucherReservations] = useState<ReservationRow[]>([]);
 
   const [listVisibleCount, setListVisibleCount] = useState(10);
@@ -295,6 +328,7 @@ export default function PracticeStudentPage() {
       setRooms([]);
       setLessons([]);
       setReservations([]);
+      setProtectedSlots([]);
       setMyVoucherReservations([]);
       setMe("");
       setVoucherSummary(null);
@@ -305,6 +339,7 @@ export default function PracticeStudentPage() {
     setRooms(json.rooms ?? []);
     setLessons(json.lessons ?? []);
     setReservations((json.reservations ?? []) as ReservationRow[]);
+    setProtectedSlots((json.protected_slots ?? []) as ProtectedSlotRow[]);
     setMyVoucherReservations((json.my_reservations_in_voucher ?? []) as ReservationRow[]);
     setMe(String(json?.me?.student_id ?? ""));
     setVoucherSummary((json.voucher_summary ?? null) as VoucherSummary | null);
@@ -388,6 +423,9 @@ export default function PracticeStudentPage() {
   }, [nextWeekStart, reserveMaxYmd]);
 
   function slotStatus(dateStr: string, time: string, room: string) {
+    const protectedBlock = isProtectedSlot(protectedSlots, rooms, dateStr, time, room);
+    if (protectedBlock) return { kind: "protected" as const };
+
     const lessonBlock = lessons.some(
       (l) =>
         l.lesson_date === dateStr &&
@@ -417,6 +455,10 @@ export default function PracticeStudentPage() {
     if (initialLoading || refreshing || acting) return;
 
     const st = slotStatus(selectedDate, t, selectedRoom);
+    if (st.kind === "protected") {
+      showToast("해당 시간/홀은 보호된 고정 스케줄이라 예약할 수 없어요.", "warn");
+      return;
+    }
     if (st.kind !== "free") return;
 
     if (isClosedWeekday(selectedDate)) {
@@ -498,9 +540,13 @@ export default function PracticeStudentPage() {
         }),
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(mapPracticeError(String(data.error ?? "")), "err");
+        showToast(
+          String(data.message ?? mapPracticeError(String(data.error ?? ""))),
+          "err"
+        );
         return;
       }
 
@@ -1130,6 +1176,25 @@ export default function PracticeStudentPage() {
                 justifyContent: "space-between",
                 gap: 10,
               };
+
+              if (st.kind === "protected") {
+                return (
+                  <div
+                    key={t}
+                    style={{
+                      ...baseCard,
+                      background: "#f0f2f5",
+                      border: "2px dashed rgba(0,0,0,0.35)",
+                    }}
+                    title="보호된 고정 스케줄"
+                  >
+                    <div style={{ fontWeight: 1000, color: "#111" }}>{t}</div>
+                    <div style={{ fontSize: 12, fontWeight: 1000, color: "#111", opacity: 0.9 }}>
+                      예약 마감
+                    </div>
+                  </div>
+                );
+              }
 
               if (st.kind === "lesson") {
                 return (

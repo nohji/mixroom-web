@@ -572,18 +572,44 @@ export default function AdminLessonsHallSheetPage() {
   
     setPracticeSaving(true);
   
-    const res = await authFetch(
+    let res = await authFetch(
       `/api/admin/practice-reservations/${selectedPractice.id}/change-room`,
       {
         method: "POST",
         body: JSON.stringify({
           room_id: peRoomId,
           reason: peReason || null,
+          force: false,
         }),
       }
     );
   
-    const json = await res.json().catch(() => ({}));
+    let json = await res.json().catch(() => ({}));
+  
+    if (!res.ok && res.status === 409 && json?.code === "PROTECTED_FIXED_SLOT_CONFLICT") {
+      const ok = confirm(
+        "해당 시간/홀에는 보호된 고정 스케줄이 있어요.\n그래도 홀 변경할까요?"
+      );
+  
+      if (!ok) {
+        setPracticeSaving(false);
+        return;
+      }
+  
+      res = await authFetch(
+        `/api/admin/practice-reservations/${selectedPractice.id}/change-room`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            room_id: peRoomId,
+            reason: peReason || null,
+            force: true,
+          }),
+        }
+      );
+  
+      json = await res.json().catch(() => ({}));
+    }
   
     if (!res.ok) {
       alert(json.error ?? "홀 변경 실패");

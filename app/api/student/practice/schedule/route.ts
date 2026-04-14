@@ -16,6 +16,37 @@ function todayYmdKST() {
   return kst.toISOString().slice(0, 10);
 }
 
+function parseYmd(ymd: string) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+function toYmd(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function toWeekdayKst(dateStr: string) {
+  return parseYmd(dateStr).getDay();
+}
+
+function datesBetween(from: string, to: string) {
+  const start = parseYmd(from);
+  const end = parseYmd(to);
+
+  const out: string[] = [];
+  const cur = new Date(start);
+
+  while (cur.getTime() <= end.getTime()) {
+    out.push(toYmd(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return out;
+}
+
 export async function GET(req: Request) {
   const guard = await requireStudent();
   if (!guard.ok) return json({ error: guard.error }, guard.status);
@@ -41,6 +72,7 @@ export async function GET(req: Request) {
     { data: rawResv, error: pErr },
     { data: myClasses, error: cErr },
     { data: grantRows, error: grantErr },
+    { data: protectedRaw, error: protectedErr },
   ] = await Promise.all([
     supabaseServer
       .from("practice_rooms")
@@ -71,6 +103,11 @@ export async function GET(req: Request) {
       .from("practice_credit_grants")
       .select("grant_type, hours")
       .eq("student_id", studentUserId),
+
+    supabaseServer
+      .from("fixed_schedule_slots")
+      .select("id, room_id, weekday, lesson_time, hold_for_renewal, memo")
+      .eq("hold_for_renewal", true),
   ]);
 
   if (roomErr) return json({ error: roomErr.message }, 500);
@@ -78,6 +115,7 @@ export async function GET(req: Request) {
   if (pErr) return json({ error: pErr.message }, 500);
   if (cErr) return json({ error: cErr.message }, 500);
   if (grantErr) return json({ error: grantErr.message }, 500);
+  if (protectedErr) return json({ error: protectedErr.message }, 500);
 
   const roomNameById = new Map<string, string>();
   (rooms ?? []).forEach((r: any) => {
@@ -86,7 +124,7 @@ export async function GET(req: Request) {
 
   const lessons = (rawLessons ?? []).map((l: any) => ({
     ...l,
-    room_name: roomNameById.get(String(l.room_id)) ?? null,
+    room_name: l.room_id ? roomNameById.get(String(l.room_id)) ?? null : null,
   }));
 
   const reservations = (rawResv ?? []).map((r: any) => {
@@ -96,7 +134,7 @@ export async function GET(req: Request) {
       student_id: isMine ? r.student_id : null,
       is_mine: isMine,
       room_id: r.room_id,
-      room_name: roomNameById.get(String(r.room_id)) ?? null,
+      room_name: r.room_id ? roomNameById.get(String(r.room_id)) ?? null : null,
       date: r.date,
       start_time: r.start_time,
       end_time: r.end_time,
@@ -107,6 +145,38 @@ export async function GET(req: Request) {
       created_at: r.created_at,
     };
   });
+
+  const protected_slots: Array<{
+    id: string;
+    date: string;
+    weekday: number;
+    lesson_time: string;
+    room_id: string | null;
+    room_name: string | null;
+    memo: string | null;
+  }> = [];
+
+  const allDates = datesBetween(from, to);
+
+  for (const dateStr of allDates) {
+    const weekday = toWeekdayKst(dateStr);
+
+    for (const slot of protectedRaw ?? []) {
+      if (Number(slot.weekday) !== weekday) continue;
+
+      const roomId = slot.room_id ? String(slot.room_id) : null;
+
+      protected_slots.push({
+        id: String(slot.id),
+        date: dateStr,
+        weekday,
+        lesson_time: String(slot.lesson_time),
+        room_id: roomId,
+        room_name: roomId ? roomNameById.get(roomId) ?? null : null,
+        memo: slot.memo ?? null,
+      });
+    }
+  }
 
   const classIds = (myClasses ?? []).map((x: any) => String(x.id)).filter(Boolean);
 
@@ -128,7 +198,7 @@ export async function GET(req: Request) {
       id: r.id,
       student_id: r.student_id,
       room_id: r.room_id,
-      room_name: roomNameById.get(String(r.room_id)) ?? null,
+      room_name: r.room_id ? roomNameById.get(String(r.room_id)) ?? null : null,
       date: r.date,
       start_time: r.start_time,
       end_time: r.end_time,
@@ -151,6 +221,7 @@ export async function GET(req: Request) {
       rooms: rooms ?? [],
       lessons,
       reservations,
+      protected_slots,
       my_reservations_in_voucher: myReservationsInRange,
       voucher_summary: {
         today,
@@ -269,6 +340,7 @@ export async function GET(req: Request) {
     rooms: rooms ?? [],
     lessons,
     reservations,
+    protected_slots,
     my_reservations_in_voucher,
     voucher_summary,
     debug: {
