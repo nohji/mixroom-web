@@ -66,10 +66,6 @@ export async function POST(req: Request) {
   const minDate = addDaysYmd(today, 2);
   const maxDate = addDaysYmd(today, 30);
 
-  if (date < minDate) {
-    return json({ error: "TOO_SOON" }, 400);
-  }
-
   if (date > maxDate) {
     return json({ error: "TOO_FAR" }, 400);
   }
@@ -81,6 +77,50 @@ export async function POST(req: Request) {
 
   for (const t of uniqueTimes) {
     if (!isValidTimeFormat(t)) return json({ error: "INVALID_TIME_FORMAT" }, 400);
+  }
+
+  // voucher 조회
+  const { data: vouchers, error: voucherErr } = await supabaseServer
+    .from("practice_vouchers")
+    .select("id, valid_from, valid_until, practice_open_from")
+    .eq("student_id", guard.studentUserId)
+    .order("valid_from", { ascending: true });
+
+  if (voucherErr) return json({ error: voucherErr.message }, 500);
+
+  // 해당 날짜에 사용 가능한 voucher 찾기
+  const usableVoucher = (vouchers ?? []).find((v: any) => {
+    const openFrom = String(v.practice_open_from ?? v.valid_from ?? "");
+    const validUntil = String(v.valid_until ?? "");
+    if (!openFrom || !validUntil) return false;
+    return date >= openFrom && date <= validUntil;
+  });
+
+  if (!usableVoucher) {
+    return json(
+      {
+        error: "OUTSIDE_VOUCHER_RANGE",
+        message: "이 수강권의 연습실 예약 가능 기간이 아닙니다.",
+      },
+      400
+    );
+  }
+
+  const voucherOpenFrom = String(
+    usableVoucher.practice_open_from ?? usableVoucher.valid_from ?? ""
+  );
+
+  const effectiveMinDate =
+    voucherOpenFrom && voucherOpenFrom > minDate ? voucherOpenFrom : minDate;
+
+  if (date < effectiveMinDate) {
+    return json(
+      {
+        error: "TOO_SOON",
+        message: `예약 가능 시작일은 ${effectiveMinDate} 입니다.`,
+      },
+      400
+    );
   }
 
   const { data: existing, error: exErr } = await supabaseServer

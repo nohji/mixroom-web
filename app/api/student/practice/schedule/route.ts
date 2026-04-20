@@ -247,7 +247,7 @@ export async function GET(req: Request) {
 
   const { data: vouchers, error: vErr } = await supabaseServer
     .from("practice_vouchers")
-    .select("id, class_id, quantity, initial_hours, valid_from, valid_until")
+    .select("id, class_id, quantity, initial_hours, valid_from, valid_until, practice_open_from")
     .in("class_id", classIds)
     .order("valid_from", { ascending: true });
 
@@ -260,11 +260,13 @@ export async function GET(req: Request) {
     initial_hours: Number(v.initial_hours ?? 0),
     valid_from: v.valid_from ? String(v.valid_from) : null,
     valid_until: v.valid_until ? String(v.valid_until) : null,
+    practice_open_from: v.practice_open_from ? String(v.practice_open_from) : null,
   }));
 
   const isActive = (v: any) => {
     if (!v.valid_until) return false;
-    const fromOk = !v.valid_from || v.valid_from <= today;
+    const openFrom = v.practice_open_from ?? v.valid_from;
+    const fromOk = !openFrom || openFrom <= today;
     const untilOk = v.valid_until >= today;
     return fromOk && untilOk;
   };
@@ -279,9 +281,15 @@ export async function GET(req: Request) {
     )[0];
   } else {
     const upcoming = vv
-      .filter((v) => v.valid_from && v.valid_from > today)
-      .sort((a, b) => String(a.valid_from).localeCompare(String(b.valid_from)));
-
+    .filter((v) => {
+        const openFrom = v.practice_open_from ?? v.valid_from;
+        return openFrom && openFrom > today;
+      })
+      .sort((a, b) => {
+        const aFrom = a.practice_open_from ?? a.valid_from ?? "";
+        const bFrom = b.practice_open_from ?? b.valid_from ?? "";
+        return String(aFrom).localeCompare(String(bFrom));
+      });
     picked = upcoming.length > 0 ? upcoming[0] : null;
   }
 
@@ -302,7 +310,7 @@ export async function GET(req: Request) {
         initial_hours: initialHours,
         free_hours: freeHours,
         paid_hours: paidHours,
-        usable_from: picked.valid_from,
+        usable_from: picked.practice_open_from ?? picked.valid_from,
         usable_until: picked.valid_until,
         has_voucher: remainingHours > 0,
         active_voucher_ids: [picked.id],

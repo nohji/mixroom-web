@@ -179,6 +179,11 @@ function isPracticeReservableDate(dateStr: string) {
   return dateStr >= minYmd && dateStr <= maxYmd;
 }
 
+function getEffectiveOpenFrom(voucherFrom: string | null, reserveMinYmd: string) {
+  if (!voucherFrom) return reserveMinYmd;
+  return voucherFrom > reserveMinYmd ? voucherFrom : reserveMinYmd;
+}
+
 function isClosedWeekday(dateStr: string) {
   return parseYmd(dateStr).getDay() === 4; // 목요일
 }
@@ -288,6 +293,10 @@ export default function PracticeStudentPage() {
     return totalRemainingHours <= 0;
   }, [totalRemainingHours]);
 
+  const effectiveOpenFrom = useMemo(() => {
+    return getEffectiveOpenFrom(voucherFrom, reserveMinYmd);
+  }, [voucherFrom, reserveMinYmd]);
+
   useEffect(() => {
     const sd = parseYmd(selectedDate);
     const ws = parseYmd(weekFrom);
@@ -301,7 +310,7 @@ export default function PracticeStudentPage() {
 
     if (!isPracticeReservableDate(next)) {
       if (weekFrom <= reserveMaxYmd && weekTo >= reserveMinYmd) {
-        next = weekFrom < reserveMinYmd ? reserveMinYmd : weekFrom;
+        next = weekFrom < effectiveOpenFrom ? effectiveOpenFrom : weekFrom;
       }
     }
 
@@ -309,7 +318,7 @@ export default function PracticeStudentPage() {
       setSelectedDate(next);
       setPickedTimes([]);
     }
-  }, [selectedDate, weekFrom, weekTo, reserveMinYmd, reserveMaxYmd]);
+  }, [selectedDate, weekFrom, weekTo, effectiveOpenFrom, reserveMaxYmd]);
 
   function getSlots(date: Date) {
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
@@ -467,12 +476,15 @@ export default function PracticeStudentPage() {
     }
 
     if (!isPracticeReservableDate(selectedDate)) {
-      showToast(`연습실 예약은 ${reserveMinYmd} ~ ${reserveMaxYmd} 사이 날짜만 신청할 수 있어요.`, "warn");
+      showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
       return;
     }
 
     if (!inRangeDate(selectedDate, voucherFrom, voucherTo)) {
-      showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
+      showToast(
+        `이 수강권의 연습실 예약 가능 기간은 ${voucherFrom ?? effectiveOpenFrom} ~ ${voucherTo ?? reserveMaxYmd} 입니다.`,
+        "warn"
+      );
       return;
     }
 
@@ -510,7 +522,10 @@ export default function PracticeStudentPage() {
     }
 
     if (!inRangeDate(selectedDate, voucherFrom, voucherTo)) {
-      showToast("수강권(무료 제공 기간) 범위 밖의 날짜는 예약할 수 없어요.", "warn");
+      showToast(
+        `이 수강권의 연습실 예약 가능 기간은 ${voucherFrom ?? effectiveOpenFrom} ~ ${voucherTo ?? reserveMaxYmd} 입니다.`,
+        "warn"
+      );
       return;
     }
 
@@ -612,7 +627,7 @@ export default function PracticeStudentPage() {
   const goThisWeek = () => {
     if (initialLoading || refreshing || acting) return;
     setWeekStart(ymd(startOfWeek(new Date())));
-    setSelectedDate(reserveMinYmd);
+    setSelectedDate(effectiveOpenFrom);
     setPickedTimes([]);
   };
 
@@ -997,7 +1012,7 @@ export default function PracticeStudentPage() {
           lineHeight: "18px",
         }}
       >
-        연습실 예약 가능 기간: <b>{reserveMinYmd}</b> ~ <b>{reserveMaxYmd}</b>
+        연습실 예약 가능 기간: <b>{effectiveOpenFrom}</b> ~ <b>{reserveMaxYmd}</b>
         <br />
         * 당일 및 다음날 예약은 불가하며, 최대 30일 뒤까지만 신청할 수 있어요.
       </div>
@@ -1067,7 +1082,7 @@ export default function PracticeStudentPage() {
                   }
 
                   if (outOfVoucher) {
-                    showToast("수강권 기간 밖의 날짜입니다.", "warn");
+                    showToast(`이 수강권의 연습실 예약은 ${voucherFrom ?? effectiveOpenFrom}부터 가능합니다.`, "warn");
                     return;
                   }
 
@@ -1090,7 +1105,7 @@ export default function PracticeStudentPage() {
                   outOfPolicy
                     ? `연습실 예약 가능 기간은 ${reserveMinYmd} ~ ${reserveMaxYmd} 입니다.`
                     : outOfVoucher
-                    ? "수강권(무료 제공 기간) 밖의 날짜입니다."
+                    ? `연습실 예약 가능 시작일은 ${voucherFrom ?? effectiveOpenFrom}입니다.`
                     : dateStr
                 }
               >
