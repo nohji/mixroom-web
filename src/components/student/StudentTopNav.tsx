@@ -9,6 +9,7 @@ export default function StudentTopNav() {
   const tabs = [
     { href: "/student/lesson-change", label: "레슨" },
     { href: "/student/practice", label: "연습실" },
+    { href: "/student/practice-guide", label: "연습실사용법" },
     { href: "/student/guide", label: "필독사항" },
   ] as const;
 
@@ -25,8 +26,7 @@ export default function StudentTopNav() {
     >
       {tabs.map((t) => {
         const active =
-          pathname === t.href ||
-          pathname.startsWith(t.href);
+          pathname === t.href || pathname.startsWith(t.href + "/");
 
         return (
           <Link
@@ -42,10 +42,13 @@ export default function StudentTopNav() {
               color: active ? "#fff" : "#111",
               fontWeight: 1100,
               textDecoration: "none",
+              fontSize: t.href === "/student/practice-guide" ? 13 : 15,
+              lineHeight: 1.2,
+              wordBreak: "keep-all",
             }}
           >
             {t.label}
-          </Link>
+          </Link>   
         );
       })}
     </div>
