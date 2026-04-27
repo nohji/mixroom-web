@@ -10,7 +10,7 @@ const COMMON_GUIDE = {
   notes: [
     "음식 반입 금지 (음료만 허용)",
     "장비 파손·분실 시 배상 책임이 발생할 수 있습니다.",
-    "무인 운영 시 퇴실 전 모든 전원을 OFF 해주세요. (사용법 확인 필수)",
+    "무인으로 운영 시, 이용 후 정리 부탁드립니다.",
     "소지품을 반드시 확인한 후 퇴실해주세요.",
   ],
 };
@@ -102,8 +102,20 @@ export default function StudentPracticeGuidePage() {
           >
             📌 연습실 이용 전 비밀번호, 와이파이, 주의사항 및 홀별 사용법을
             반드시 확인해주세요.
-            <br />
-            무인 운영 시간에는 퇴실 전 정리와 전원 OFF까지 꼭 부탁드립니다.
+           
+          </div>
+
+          <div
+            style={{
+              fontSize: 14,
+              lineHeight: 1.6,
+              color: "#111",
+              fontWeight: 600,
+              marginBottom: 10,
+            }}
+          >
+           
+            📌 무인 운영 시간에는 퇴실 전 정리 꼭 부탁드립니다.
           </div>
 
           <div

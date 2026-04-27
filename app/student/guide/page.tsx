@@ -38,15 +38,17 @@ export default function StudentGuidePage() {
         <div style={{ fontSize: 18, fontWeight: 1100, marginBottom: 6, color: "#000" }}>
           ⚠️ 반드시 확인해주세요
         </div>
-
         <div style={{ fontSize: 14, lineHeight: 1.6, color: "#111", fontWeight: 600 }}>
           📌 수업 변경, 연습실 예약 및 취소 규정을 반드시 확인해주세요.
           <br />
           규정 미확인으로 발생하는 문제는 책임지지 않습니다.
         </div>
+        <br />
 
         <div style={{ fontSize: 14, lineHeight: 1.6, color: "#111", fontWeight: 600 }}>
-         📌 수강권 변경, 연장 및 연습실 예약은 영업일 기준 오후 6시~7시 사이 일괄 승인됩니다.
+         📌 수강권 변경, 연장 및 연습실 예약은 
+         <br />
+         영업일 기준 오후 6시~7시 사이 일괄 승인됩니다.
           <br />
           승인 결과는 오후 7시 이후 확인 부탁드립니다.
         </div>
@@ -67,11 +69,23 @@ export default function StudentGuidePage() {
         </Item>
 
         <Item>
-          <b>4회차 레슨은 변경 시 이전 일정</b>으로만 변경 가능하므로, 사전 변경 요청 부탁드립니다.
+          <b>4회차 레슨은 변경 시 이전 일정</b>으로만 변경 가능하므로, 
+          <br />
+          사전 변경 요청 부탁드립니다.
         </Item>
 
         <Item>
-          문의사항은 <b>카카오톡 채널 ‘믹스룸 스튜디오’</b>로 편하게 연락 주세요.
+          레슨 변경은 선착순으로 순차 승인되고 있습니다. 
+          <br />
+          승인되지 않을 경우, 
+          <br />
+          <b>다른 가능한 날짜로 변경하시거나 기존 일정</b>으로 참석 부탁드립니다.
+        </Item>
+
+        <Item>
+          문의사항은 <b>카카오톡 채널 ‘믹스룸 스튜디오’</b>로
+          <br />
+           편하게 연락 주세요.
         </Item>
       </Section>
 
@@ -113,7 +127,7 @@ export default function StudentGuidePage() {
         </Item>
 
         <Item>
-          <b>당일을 기준으로 한 달 이내의 날짜까지만</b> 미리 예약 가능합니다.
+          <b>당일 기준, 한 달 이내의 날짜까지만</b> 미리 예약 가능합니다.
         </Item>
 
         <Item>
@@ -143,11 +157,15 @@ export default function StudentGuidePage() {
         <Item>
           무료 제공 시간을 초과할 경우
           <br />
-          <b>수강생 전용 할인가로 연습실 이용권을 구매</b>하여 이용할 수 있습니다.
+          <b>수강생 전용 할인가로 연습실 이용권을 구매</b>하여 
+          <br />
+          이용할 수 있습니다.
         </Item>
 
         <Item>
-          이용권 구매는 <b>카카오톡 채널 ‘믹스룸 스튜디오’</b>로 문의해 주세요.
+          이용권 구매는 <b>카카오톡 채널 ‘믹스룸 스튜디오’</b>로 
+          <br />
+          문의해 주세요.
         </Item>
 
         <Divider />
