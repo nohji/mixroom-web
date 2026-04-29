@@ -992,9 +992,9 @@ export default function TeacherScheduleBoardPage() {
                       border: "2px solid rgba(0,0,0,0.12)",
                       background: MY_BLUE,
                       color: "#fff",
-                      padding: isMobile ? "3px 4px" : "4px 6px",
+                      padding: isMobile ? "3px 4px" : "4px 5px",
                       fontWeight: 1000,
-                      fontSize: isMobile ? 9 : 11,
+                      fontSize: isMobile ? 8 : 10,
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "center",
@@ -1004,21 +1004,21 @@ export default function TeacherScheduleBoardPage() {
                       lineHeight: 1.05,
                     }}
                     title={`${l.lesson_date} ${clampHHMM(l.lesson_time)} / ${l.room_name || roomNorm}
-                      학생: ${l.student_name || "이름 없음"}
-                      ${
-                        l.lesson_no && l.total_lessons
-                          ? `회차: ${l.lesson_no}/${l.total_lessons}`
-                          : l.lesson_no
-                          ? `회차: ${l.lesson_no}`
-                          : ""
-                      }`}
+                학생: ${l.student_name || "이름 없음"}
+                ${
+                  l.lesson_no && l.total_lessons
+                    ? `회차: ${l.lesson_no}/${l.total_lessons}`
+                    : l.lesson_no
+                    ? `회차: ${l.lesson_no}`
+                    : ""
+                }`}
                   >
-                   <div
+                    <div
                       style={{
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        gap: 4,
+                        gap: 2,
                         minWidth: 0,
                       }}
                     >
@@ -1028,35 +1028,36 @@ export default function TeacherScheduleBoardPage() {
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
-                          fontSize: isMobile ? 9 : 11,
-                          fontWeight: 1000,
+                          fontSize: isMobile ? 8 : 10,
+                          fontWeight: 900,
+                          letterSpacing: "-0.04em",
                         }}
                       >
                         {l.student_name || "이름 없음"}
                       </div>
-
-                      {isMobile && l.lesson_no ? (
+                
+                      {l.lesson_no ? (
                         <span
                           style={{
                             flexShrink: 0,
-                            padding: isMobile ? "1px 4px" : "1px 6px",
+                            padding: "1px 4px",
                             borderRadius: 999,
                             background: "rgba(255,255,255,0.18)",
                             border: "1px solid rgba(255,255,255,0.28)",
-                            fontSize: isMobile ? 8 : 9,
+                            fontSize: isMobile ? 7 : 9,
                             fontWeight: 1000,
-                            lineHeight: 1.2,
+                            lineHeight: 1.15,
                           }}
                         >
                           {l.total_lessons ? `${l.lesson_no}/${l.total_lessons}` : `${l.lesson_no}회`}
                         </span>
                       ) : null}
                     </div>
-
+                
                     <div
                       style={{
                         marginTop: 1,
-                        fontSize: isMobile ? 8 : 10,
+                        fontSize: isMobile ? 8 : 9,
                         fontWeight: 800,
                         opacity: 0.95,
                         whiteSpace: "nowrap",
@@ -1070,26 +1071,6 @@ export default function TeacherScheduleBoardPage() {
                             l.allow_change_override ? " · 예외" : ""
                           }`}
                     </div>
-
-                    {!isMobile && (
-                      <div
-                        style={{
-                          marginTop: 1,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          fontSize: 10,
-                          fontWeight: 800,
-                          opacity: 0.95,
-                        }}
-                      >
-                        {l.lesson_no && l.total_lessons
-                          ? `${l.lesson_no}회차 / 총 ${l.total_lessons}회`
-                          : l.lesson_no
-                          ? `${l.lesson_no}회차`
-                          : ""}
-                      </div>
-                    )}
                   </div>,
                 ];
               })}

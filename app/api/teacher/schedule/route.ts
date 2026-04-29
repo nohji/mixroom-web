@@ -59,6 +59,7 @@ export async function GET(req: Request) {
           { status: 400 }
         );
       }
+
       teacherId = qTeacherId;
     }
 
@@ -68,7 +69,6 @@ export async function GET(req: Request) {
       .eq("id", teacherId)
       .maybeSingle();
 
-    // 1) 내 레슨
     const { data: myLessonRows, error: myErr } = await supabaseServer
       .from("lessons")
       .select(`
@@ -101,7 +101,6 @@ export async function GET(req: Request) {
       new Set((myLessonRows ?? []).map((r: any) => r.room_id).filter(Boolean))
     ) as string[];
 
-    // 2) classes
     let classRows: any[] = [];
     if (classIds.length > 0) {
       const { data, error } = await supabaseServer
@@ -112,6 +111,7 @@ export async function GET(req: Request) {
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+
       classRows = data ?? [];
     }
 
@@ -129,10 +129,10 @@ export async function GET(req: Request) {
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+
       studentProfiles = data ?? [];
     }
 
-    // 3) 회차 계산용 전체 lessons
     let classLessonRows: any[] = [];
     if (classIds.length > 0) {
       const { data, error } = await supabaseServer
@@ -146,10 +146,10 @@ export async function GET(req: Request) {
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+
       classLessonRows = data ?? [];
     }
 
-    // 4) 다른 강사 수업
     const { data: otherLessonRows, error: otherErr } = await supabaseServer
       .from("lessons")
       .select(`
@@ -176,7 +176,6 @@ export async function GET(req: Request) {
       if (r.room_id) roomIds.push(r.room_id);
     });
 
-    // 5) 연습실 예약 / 운영차단
     const { data: practiceRows, error: practiceErr } = await supabaseServer
       .from("practice_reservations")
       .select(`
@@ -223,7 +222,6 @@ export async function GET(req: Request) {
       if (r.room_id) roomIds.push(r.room_id);
     });
 
-    // 6) rooms
     const uniqueRoomIds = Array.from(new Set(roomIds.filter(Boolean))) as string[];
 
     let roomRows: any[] = [];
@@ -236,10 +234,10 @@ export async function GET(req: Request) {
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+
       roomRows = data ?? [];
     }
 
-    // 7) teacher_availabilities
     const { data: availabilityRows, error: availabilityErr } = await supabaseServer
       .from("teacher_availabilities")
       .select("teacher_id, weekday, start_time, end_time, device_type")
@@ -251,7 +249,6 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: availabilityErr.message }, { status: 500 });
     }
 
-    // 8) teacher_change_blocks (weekday 기준)
     const { data: changeBlockRows, error: changeBlockErr } = await supabaseServer
       .from("teacher_change_blocks")
       .select(`
@@ -270,20 +267,33 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: changeBlockErr.message }, { status: 500 });
     }
 
-    const classMap = new Map<string, any>(classRows.map((row: any) => [row.id, row]));
+    const classMap = new Map<string, any>(
+      classRows.map((row: any) => [row.id, row])
+    );
+
     const profileMap = new Map<string, any>(
       studentProfiles.map((row: any) => [row.id, row])
     );
-    const roomMap = new Map<string, any>(roomRows.map((row: any) => [row.id, row]));
+
+    const roomMap = new Map<string, any>(
+      roomRows.map((row: any) => [row.id, row])
+    );
 
     const classLessonMap = new Map<string, any[]>();
+
     classLessonRows.forEach((row: any) => {
       const arr = classLessonMap.get(row.class_id) ?? [];
       arr.push(row);
       classLessonMap.set(row.class_id, arr);
     });
+
     classLessonMap.forEach((arr) => {
-      arr.sort((a, b) => sortLessonKey(a).localeCompare(sortLessonKey(b)));
+      arr.sort((a, b) => {
+        const dateCompare = sortLessonKey(a).localeCompare(sortLessonKey(b));
+        if (dateCompare !== 0) return dateCompare;
+
+        return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+      });
     });
 
     const myLessons = (myLessonRows ?? []).map((row: any) => {
@@ -295,10 +305,9 @@ export async function GET(req: Request) {
         ? classLessonMap.get(row.class_id) ?? []
         : [];
 
-      const idx =
-        typeof row.lesson_no === "number" && row.lesson_no > 0
-          ? row.lesson_no - 1
-          : allClassLessons.findIndex((x: any) => x.id === row.id);
+      // 연장/강제변경 후 DB lesson_no가 꼬여도
+      // 선생님 화면에서는 현재 날짜/시간 순서 기준으로 회차를 다시 계산
+      const idx = allClassLessons.findIndex((x: any) => x.id === row.id);
 
       return {
         id: row.id,
@@ -314,12 +323,7 @@ export async function GET(req: Request) {
         student_id: cls?.student_id ?? null,
         student_name: student?.name ?? "이름 없음",
 
-        lesson_no:
-          typeof row.lesson_no === "number" && row.lesson_no > 0
-            ? row.lesson_no
-            : idx >= 0
-            ? idx + 1
-            : null,
+        lesson_no: idx >= 0 ? idx + 1 : null,
         total_lessons: cls?.total_lessons ?? allClassLessons.length ?? null,
         class_type: cls?.type ?? null,
       };
