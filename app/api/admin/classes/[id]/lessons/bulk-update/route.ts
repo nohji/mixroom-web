@@ -108,12 +108,28 @@ export async function PATCH(
         : null;
     const lessonTime = body.lessonTime || null;
 
-    if (!roomId && !teacherId && weekday === null && !lessonTime) {
+    const isChangingRoom = !!roomId;
+    const isChangingTeacher = !!teacherId;
+    const isChangingDateOrTime = weekday !== null || !!lessonTime;
+
+    if (!isChangingRoom && !isChangingTeacher && !isChangingDateOrTime) {
       return NextResponse.json(
         { error: "변경할 항목이 없습니다." },
         { status: 400 }
       );
     }
+
+    const { data: targetClass, error: targetClassErr } = await supabaseServer
+      .from("classes")
+      .select("id, student_id")
+      .eq("id", classId)
+      .single();
+
+    if (targetClassErr || !targetClass) {
+      return NextResponse.json({ error: "CLASS_NOT_FOUND" }, { status: 404 });
+    }
+
+    const targetStudentId = targetClass.student_id;
 
     const { data: targetLessons, error: targetErr } = await supabaseServer
       .from("lessons")
@@ -212,10 +228,10 @@ export async function PATCH(
     }
 
     const { data: teacherChangeBlocks, error: teacherChangeBlockErr } =
-      targetTeacherIds.length
+      isChangingTeacher && targetTeacherIds.length
         ? await supabaseServer
-        .from("teacher_change_blocks")
-        .select("id, teacher_id, weekday, start_time, end_time, reason")
+            .from("teacher_change_blocks")
+            .select("id, teacher_id, weekday, start_time, end_time, reason")
             .in("teacher_id", targetTeacherIds)
         : { data: [], error: null };
 
@@ -226,9 +242,12 @@ export async function PATCH(
       );
     }
 
-    const { data: fixedRows, error: fixedErr } = await supabaseServer
-      .from("fixed_schedule_slots")
-      .select("id, student_id, teacher_id, weekday, lesson_time, hold_for_renewal, memo");
+    const { data: fixedRows, error: fixedErr } =
+      isChangingRoom || isChangingTeacher || isChangingDateOrTime
+        ? await supabaseServer
+            .from("fixed_schedule_slots")
+            .select("id, student_id, teacher_id, room_id, weekday, lesson_time, hold_for_renewal, memo")
+        : { data: [], error: null };
 
     if (fixedErr) {
       return NextResponse.json({ error: fixedErr.message }, { status: 500 });
@@ -282,24 +301,6 @@ export async function PATCH(
     };
 
     const findTeacherChangeBlock = (
-        targetTeacherId: string,
-        targetDate: string,
-        targetTime: string
-      ) => {
-        const wd = getWeekday(targetDate);
-        const time = normalizeTime(targetTime);
-      
-        return (teacherChangeBlocks ?? []).find((b: any) => {
-          return (
-            b.teacher_id === targetTeacherId &&
-            Number(b.weekday) === wd &&
-            normalizeTime(b.start_time) <= time &&
-            time < normalizeTime(b.end_time)
-          );
-        });
-      };
-
-    const findFixedSlot = (
       targetTeacherId: string,
       targetDate: string,
       targetTime: string
@@ -307,12 +308,39 @@ export async function PATCH(
       const wd = getWeekday(targetDate);
       const time = normalizeTime(targetTime);
 
-      return (fixedRows ?? []).find((p: any) => {
+      return (teacherChangeBlocks ?? []).find((b: any) => {
         return (
-          p.teacher_id === targetTeacherId &&
-          Number(p.weekday) === wd &&
-          normalizeTime(p.lesson_time) === time
+          b.teacher_id === targetTeacherId &&
+          Number(b.weekday) === wd &&
+          normalizeTime(b.start_time) <= time &&
+          time < normalizeTime(b.end_time)
         );
+      });
+    };
+
+    const findFixedSlot = (
+      targetTeacherId: string,
+      targetRoomId: string,
+      targetDate: string,
+      targetTime: string
+    ) => {
+      const wd = getWeekday(targetDate);
+      const time = normalizeTime(targetTime);
+
+      return (fixedRows ?? []).find((p: any) => {
+        if (p.student_id === targetStudentId) return false;
+
+        const sameWeekdayTime =
+          Number(p.weekday) === wd &&
+          normalizeTime(p.lesson_time) === time;
+
+        const sameProtectedTeacher =
+          !!p.teacher_id && p.teacher_id === targetTeacherId;
+
+        const sameProtectedRoom =
+          !!p.room_id && p.room_id === targetRoomId;
+
+        return sameWeekdayTime && (sameProtectedTeacher || sameProtectedRoom);
       });
     };
 
@@ -339,7 +367,10 @@ export async function PATCH(
     const conflicts: any[] = [];
 
     for (const next of nextLessons) {
-      if (!isTeacherAvailable(next.teacher_id, next.lesson_date, next.lesson_time)) {
+      if (
+        (isChangingTeacher || isChangingDateOrTime) &&
+        !isTeacherAvailable(next.teacher_id, next.lesson_date, next.lesson_time)
+      ) {
         conflicts.push({
           type: "TEACHER_AVAILABILITY_CONFLICT",
           lessonId: next.id,
@@ -353,30 +384,33 @@ export async function PATCH(
         });
       }
 
-      const teacherChangeBlock = findTeacherChangeBlock(
-        next.teacher_id,
-        next.lesson_date,
-        next.lesson_time
-      );
+      if (isChangingTeacher) {
+        const teacherChangeBlock = findTeacherChangeBlock(
+          next.teacher_id,
+          next.lesson_date,
+          next.lesson_time
+        );
 
-      if (teacherChangeBlock) {
-        conflicts.push({
-          type: "TEACHER_CHANGE_BLOCK_CONFLICT",
-          lessonId: next.id,
-          lessonDate: next.lesson_date,
-          lessonTime: next.lesson_time,
-          conflictLessonId: teacherChangeBlock.id,
-          conflictStudentName: "-",
-          conflictTeacherName: getTeacherName({ teacher_id: next.teacher_id }),
-          conflictRoomName: getRoomName({ room_id: next.room_id }),
-          message: `${next.lesson_date} ${next.lesson_time}은 선생님 변경 차단 시간입니다.${
-            teacherChangeBlock.reason ? ` (${teacherChangeBlock.reason})` : ""
-          }`,
-        });
+        if (teacherChangeBlock) {
+          conflicts.push({
+            type: "TEACHER_CHANGE_BLOCK_CONFLICT",
+            lessonId: next.id,
+            lessonDate: next.lesson_date,
+            lessonTime: next.lesson_time,
+            conflictLessonId: teacherChangeBlock.id,
+            conflictStudentName: "-",
+            conflictTeacherName: getTeacherName({ teacher_id: next.teacher_id }),
+            conflictRoomName: getRoomName({ room_id: next.room_id }),
+            message: `${next.lesson_date} ${next.lesson_time}은 선생님 변경 차단 시간입니다.${
+              teacherChangeBlock.reason ? ` (${teacherChangeBlock.reason})` : ""
+            }`,
+          });
+        }
       }
 
       const fixedSlot = findFixedSlot(
         next.teacher_id,
+        next.room_id,
         next.lesson_date,
         next.lesson_time
       );
@@ -394,8 +428,8 @@ export async function PATCH(
           conflictTeacherName: getTeacherName({ teacher_id: next.teacher_id }),
           conflictRoomName: getRoomName({ room_id: next.room_id }),
           message: fixedSlot.hold_for_renewal
-            ? `${next.lesson_date} ${next.lesson_time}은 보호 중인 고정 스케줄입니다.`
-            : `${next.lesson_date} ${next.lesson_time}은 변경 차단 시간입니다.`,
+            ? `${next.lesson_date} ${next.lesson_time}은 다른 수강생의 보호 중인 고정 스케줄입니다.`
+            : `${next.lesson_date} ${next.lesson_time}은 다른 수강생의 변경 차단 시간입니다.`,
         });
       }
 
@@ -424,7 +458,7 @@ export async function PATCH(
       const roomConflict = activeOthers.find(
         (o) =>
           o.lesson_date === next.lesson_date &&
-          o.lesson_time === next.lesson_time &&
+          normalizeTime(o.lesson_time) === normalizeTime(next.lesson_time) &&
           o.room_id === next.room_id
       );
 
@@ -438,14 +472,14 @@ export async function PATCH(
           conflictStudentName: getStudentName(roomConflict),
           conflictTeacherName: getTeacherName(roomConflict),
           conflictRoomName: getRoomName(roomConflict),
-          message: `${next.lesson_date} ${next.lesson_time}에 같은 홀 레슨이 있습니다.`,
+          message: `${next.lesson_date} ${normalizeTime(next.lesson_time)}에 같은 홀 레슨이 있습니다.`,
         });
       }
 
       const teacherConflict = activeOthers.find(
         (o) =>
           o.lesson_date === next.lesson_date &&
-          o.lesson_time === next.lesson_time &&
+          normalizeTime(o.lesson_time) === normalizeTime(next.lesson_time) &&
           o.teacher_id === next.teacher_id
       );
 
@@ -459,7 +493,7 @@ export async function PATCH(
           conflictStudentName: getStudentName(teacherConflict),
           conflictTeacherName: getTeacherName(teacherConflict),
           conflictRoomName: getRoomName(teacherConflict),
-          message: `${next.lesson_date} ${next.lesson_time}에 같은 선생님 레슨이 있습니다.`,
+          message: `${next.lesson_date} ${normalizeTime(next.lesson_time)}에 같은 선생님 레슨이 있습니다.`,
         });
       }
     }
