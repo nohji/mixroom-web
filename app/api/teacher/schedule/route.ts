@@ -105,7 +105,7 @@ export async function GET(req: Request) {
     if (classIds.length > 0) {
       const { data, error } = await supabaseServer
         .from("classes")
-        .select("id, student_id, total_lessons, type")
+        .select("id, student_id, total_lessons, type, device_type")
         .in("id", classIds);
 
       if (error) {
@@ -123,7 +123,7 @@ export async function GET(req: Request) {
     if (studentIds.length > 0) {
       const { data, error } = await supabaseServer
         .from("profiles")
-        .select("id, name")
+        .select("id, name, phone")
         .in("id", studentIds);
 
       if (error) {
@@ -207,7 +207,7 @@ export async function GET(req: Request) {
       if (missingIds.length > 0) {
         const { data, error } = await supabaseServer
           .from("profiles")
-          .select("id, name")
+          .select("id, name, phone")
           .in("id", missingIds);
 
         if (error) {
@@ -305,8 +305,6 @@ export async function GET(req: Request) {
         ? classLessonMap.get(row.class_id) ?? []
         : [];
 
-      // 연장/강제변경 후 DB lesson_no가 꼬여도
-      // 선생님 화면에서는 현재 날짜/시간 순서 기준으로 회차를 다시 계산
       const idx = allClassLessons.findIndex((x: any) => x.id === row.id);
 
       return {
@@ -322,10 +320,12 @@ export async function GET(req: Request) {
 
         student_id: cls?.student_id ?? null,
         student_name: student?.name ?? "이름 없음",
+        student_phone: student?.phone ?? null,
 
         lesson_no: idx >= 0 ? idx + 1 : null,
         total_lessons: cls?.total_lessons ?? allClassLessons.length ?? null,
         class_type: cls?.type ?? null,
+        device_type: cls?.device_type ?? null,
       };
     });
 

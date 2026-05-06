@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import TeacherShell from "@/components/TeacherShell";
 import { authFetch } from "@/lib/authFetch";
 
@@ -17,10 +18,12 @@ type LessonRow = {
 
   student_id: string | null;
   student_name: string;
+  student_phone?: string | null;
 
   lesson_no?: number | null;
   total_lessons?: number | null;
   class_type?: string | null;
+  device_type?: string | null;
 };
 
 type AvailabilityRow = {
@@ -37,11 +40,9 @@ type PracticeRow = {
   id: string;
   room_id: string | null;
   room_name: string;
-
   date: string | null;
   start_time: string | null;
   end_time: string | null;
-
   student_id: string | null;
   student_name: string;
   status: string;
@@ -59,33 +60,40 @@ type ChangeBlockRow = {
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+
 function ymd(d: Date) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
+
 function parseYmd(s: string) {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
+
 function startOfWeek(date: Date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - d.getDay());
   return d;
 }
+
 function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
 }
+
 function clampHHMM(t: string | null | undefined) {
   if (!t) return "";
   return String(t).slice(0, 5);
 }
+
 function minutesOf(t: string | null | undefined) {
   const hhmm = clampHHMM(t);
   const [h, m] = hhmm.split(":").map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
 }
+
 const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 function normalizeRoom(roomName: string | null | undefined): "A" | "B" | "C" {
@@ -96,8 +104,22 @@ function normalizeRoom(roomName: string | null | undefined): "A" | "B" | "C" {
   if (s.includes("C")) return "C";
   return "A";
 }
+
 function slotKey(date: string, time: string, roomNorm: "A" | "B" | "C") {
   return `${date}|${clampHHMM(time)}|${roomNorm}`;
+}
+
+function getDeviceLabel(deviceType: string | null | undefined) {
+  if (deviceType === "controller") return "컨트롤러";
+  if (deviceType === "turntable") return "턴테이블";
+  if (deviceType === "both") return "컨트롤러+턴테이블";
+  return "-";
+}
+
+function getClassTypeLabel(classType: string | null | undefined) {
+  if (classType === "1month") return "1개월권";
+  if (classType === "3month") return "3개월권";
+  return "";
 }
 
 export default function TeacherScheduleBoardPage() {
@@ -139,7 +161,7 @@ export default function TeacherScheduleBoardPage() {
   const [practice, setPractice] = useState<PracticeRow[]>([]);
   const [changeBlocks, setChangeBlocks] = useState<ChangeBlockRow[]>([]);
   const [loading, setLoading] = useState(true);
-  
+  const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null);
 
   const week = useMemo(() => {
     const ws = parseYmd(weekStart);
@@ -197,6 +219,7 @@ export default function TeacherScheduleBoardPage() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => load(), 120);
     };
+
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         if (timer) clearTimeout(timer);
@@ -282,6 +305,7 @@ export default function TeacherScheduleBoardPage() {
   }, [timeRange]);
 
   type Col = { dateStr: string; room: (typeof rooms)[number] };
+
   const cols = useMemo<Col[]>(() => {
     const out: Col[] = [];
     week.days.forEach((d) => {
@@ -386,8 +410,10 @@ export default function TeacherScheduleBoardPage() {
         .sort((a, b) => minutesOf(a.start) - minutesOf(b.start));
 
       const merged: { start: string; end: string }[] = [];
+
       for (const r of ranges) {
         const last = merged[merged.length - 1];
+
         if (!last) {
           merged.push({ ...r });
         } else if (minutesOf(r.start) <= minutesOf(last.end)) {
@@ -427,11 +453,13 @@ export default function TeacherScheduleBoardPage() {
     d.setDate(d.getDate() - 7);
     setWeekStart(ymd(startOfWeek(d)));
   };
+
   const goNextWeek = () => {
     const d = parseYmd(weekStart);
     d.setDate(d.getDate() + 7);
     setWeekStart(ymd(startOfWeek(d)));
   };
+
   const goThisWeek = () => {
     setWeekStart(ymd(startOfWeek(new Date())));
   };
@@ -449,7 +477,7 @@ export default function TeacherScheduleBoardPage() {
             border: "1px solid #e5e5e5",
             borderRadius: isMobile ? 16 : 12,
             background: "#fff",
-            padding: isMobile ? 12 : 12,
+            padding: 12,
             marginBottom: 12,
             display: "grid",
             gap: isMobile ? 10 : 8,
@@ -465,7 +493,9 @@ export default function TeacherScheduleBoardPage() {
                   gap: 8,
                 }}
               >
-                <div style={{ fontWeight: 1000, fontSize: 15, color: "#111" }}>강사 주간표</div>
+                <div style={{ fontWeight: 1000, fontSize: 15, color: "#111" }}>
+                  강사 주간표
+                </div>
                 <button onClick={() => load(true)} style={btnPrimary(true)}>
                   새로고침
                 </button>
@@ -494,51 +524,49 @@ export default function TeacherScheduleBoardPage() {
               </div>
             </>
           ) : (
-            <>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ fontWeight: 900, fontSize: 16 }}>강사 주간표</div>
+
+              <button onClick={goPrevWeek} style={btnGhost(false)}>
+                ◀
+              </button>
+
+              <div style={{ fontWeight: 900, fontSize: 15 }}>
+                {week.from} ~ {week.to}
+              </div>
+
+              <button onClick={goNextWeek} style={btnGhost(false)}>
+                ▶
+              </button>
+
+              <button onClick={goThisWeek} style={btnGhost(false)}>
+                이번주
+              </button>
+
+              <button onClick={() => load(true)} style={btnPrimary(false)}>
+                새로고침
+              </button>
+
               <div
                 style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
+                  marginLeft: "auto",
+                  color: "#666",
+                  fontSize: 13,
+                  fontWeight: 900,
                 }}
               >
-                <div style={{ fontWeight: 900, fontSize: 16 }}>강사 주간표</div>
-
-                <button onClick={goPrevWeek} style={btnGhost(false)}>
-                  ◀
-                </button>
-
-                <div style={{ fontWeight: 900, fontSize: 15 }}>
-                  {week.from} ~ {week.to}
-                </div>
-
-                <button onClick={goNextWeek} style={btnGhost(false)}>
-                  ▶
-                </button>
-
-                <button onClick={goThisWeek} style={btnGhost(false)}>
-                  이번주
-                </button>
-
-                <button onClick={() => load(true)} style={btnPrimary(false)}>
-                  새로고침
-                </button>
-
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    color: "#666",
-                    fontSize: 13,
-                    fontWeight: 900,
-                  }}
-                >
-                  {loading
-                    ? "불러오는 중..."
-                    : `내 수업 ${myLessons.length} · 연습실 ${practice.length} · 근무차단 ${changeBlocks.length}`}
-                </div>
+                {loading
+                  ? "불러오는 중..."
+                  : `내 수업 ${myLessons.length} · 연습실 ${practice.length} · 근무차단 ${changeBlocks.length}`}
               </div>
-            </>
+            </div>
           )}
 
           <div
@@ -590,11 +618,7 @@ export default function TeacherScheduleBoardPage() {
             boxShadow: isMobile ? "0 4px 16px rgba(0,0,0,0.04)" : "none",
           }}
         >
-          <div
-            style={{
-              minWidth: TIME_W + cols.length * COL_W,
-            }}
-          >
+          <div style={{ minWidth: TIME_W + cols.length * COL_W }}>
             <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#fff" }}>
               <div
                 style={{
@@ -699,7 +723,6 @@ export default function TeacherScheduleBoardPage() {
                         fontWeight: 1000,
                         background: "#fff",
                         borderRight: isDayEnd ? "2px solid #d1d5db" : "1px solid #f0f0f0",
-                        borderLeft: undefined,
                         color: "#111",
                         fontSize: isMobile ? 11 : 13,
                       }}
@@ -759,7 +782,6 @@ export default function TeacherScheduleBoardPage() {
                         gridRow: rIdx + 1,
                         borderBottom: "1px solid #f3f3f3",
                         borderRight: isDayEnd ? "2px solid #d1d5db" : "1px solid #f3f3f3",
-                        borderLeft: undefined,  
                         background: working
                           ? isTodayCol
                             ? "#dbeafe"
@@ -767,9 +789,7 @@ export default function TeacherScheduleBoardPage() {
                           : isTodayCol
                           ? "#f8fafc"
                           : OFF_BG,
-                        boxShadow: working
-                          ? `inset 0 0 0 1px ${WORK_BORDER}`
-                          : "none",
+                        boxShadow: working ? `inset 0 0 0 1px ${WORK_BORDER}` : "none",
                       }}
                     />
                   );
@@ -810,31 +830,24 @@ export default function TeacherScheduleBoardPage() {
                       zIndex: 4,
                       lineHeight: 1.05,
                     }}
-                    title={`${DOW_KR[block.weekday]}요일 ${block.start_time ?? ""}-${block.end_time ?? ""}\n근무 차단${block.reason ? `\n사유: ${block.reason}` : ""}`}
+                    title={`${DOW_KR[block.weekday]}요일 ${block.start_time ?? ""}-${
+                      block.end_time ?? ""
+                    }\n근무 차단${block.reason ? `\n사유: ${block.reason}` : ""}`}
                   >
-                    <div
-                      style={{
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      근무 차단
-                    </div>
+                    <div style={ellipsisStyle}>근무 차단</div>
                     <div
                       style={{
                         marginTop: 1,
                         fontSize: isMobile ? 8 : 10,
                         fontWeight: 800,
                         opacity: 0.95,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        ...ellipsisStyle,
                       }}
                     >
                       {isMobile
                         ? clampHHMM(block.start_time)
-                        : block.reason ?? `${clampHHMM(block.start_time)}-${clampHHMM(block.end_time)}`}
+                        : block.reason ??
+                          `${clampHHMM(block.start_time)}-${clampHHMM(block.end_time)}`}
                     </div>
                   </div>,
                 ];
@@ -880,9 +893,7 @@ export default function TeacherScheduleBoardPage() {
                   >
                     <div
                       style={{
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        ...ellipsisStyle,
                         width: "100%",
                         textAlign: "center",
                       }}
@@ -936,13 +947,7 @@ export default function TeacherScheduleBoardPage() {
                           : `${p.date} ${p.start_time ?? ""}-${p.end_time ?? ""}\n${p.student_name} (연습실)`
                       }
                     >
-                      <div
-                        style={{
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
+                      <div style={ellipsisStyle}>
                         {isBlocked ? "운영차단" : isMobile ? "연습실" : "연습실 예약"}
                       </div>
 
@@ -952,9 +957,7 @@ export default function TeacherScheduleBoardPage() {
                           fontSize: isMobile ? 8 : 10,
                           fontWeight: 800,
                           opacity: 0.95,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
+                          ...ellipsisStyle,
                         }}
                       >
                         {isBlocked
@@ -982,7 +985,9 @@ export default function TeacherScheduleBoardPage() {
                 const l = list[0];
 
                 return [
-                  <div
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLesson(l)}
                     key={`my-${l.id}-${key}`}
                     style={{
                       gridColumn: colIndex + 2,
@@ -1002,16 +1007,20 @@ export default function TeacherScheduleBoardPage() {
                       zIndex: 10,
                       boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
                       lineHeight: 1.05,
+                      cursor: "pointer",
+                      outline: "none",
+                      appearance: "none",
+                      textAlign: "left",
                     }}
-                    title={`${l.lesson_date} ${clampHHMM(l.lesson_time)} / ${l.room_name || roomNorm}
-                학생: ${l.student_name || "이름 없음"}
-                ${
-                  l.lesson_no && l.total_lessons
-                    ? `회차: ${l.lesson_no}/${l.total_lessons}`
-                    : l.lesson_no
-                    ? `회차: ${l.lesson_no}`
-                    : ""
-                }`}
+                    title={`${l.lesson_date} ${clampHHMM(l.lesson_time)} / ${
+                      l.room_name || roomNorm
+                    }\n학생: ${l.student_name || "이름 없음"}\n${
+                      l.lesson_no && l.total_lessons
+                        ? `회차: ${l.lesson_no}/${l.total_lessons}`
+                        : l.lesson_no
+                        ? `회차: ${l.lesson_no}`
+                        : ""
+                    }`}
                   >
                     <div
                       style={{
@@ -1025,9 +1034,7 @@ export default function TeacherScheduleBoardPage() {
                       <div
                         style={{
                           minWidth: 0,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
+                          ...ellipsisStyle,
                           fontSize: isMobile ? 8 : 10,
                           fontWeight: 900,
                           letterSpacing: "-0.04em",
@@ -1035,7 +1042,7 @@ export default function TeacherScheduleBoardPage() {
                       >
                         {l.student_name || "이름 없음"}
                       </div>
-                
+
                       {l.lesson_no ? (
                         <span
                           style={{
@@ -1053,16 +1060,14 @@ export default function TeacherScheduleBoardPage() {
                         </span>
                       ) : null}
                     </div>
-                
+
                     <div
                       style={{
                         marginTop: 1,
                         fontSize: isMobile ? 8 : 9,
                         fontWeight: 800,
                         opacity: 0.95,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
+                        ...ellipsisStyle,
                       }}
                     >
                       {isMobile
@@ -1071,7 +1076,7 @@ export default function TeacherScheduleBoardPage() {
                             l.allow_change_override ? " · 예외" : ""
                           }`}
                     </div>
-                  </div>,
+                  </button>,
                 ];
               })}
             </div>
@@ -1087,10 +1092,133 @@ export default function TeacherScheduleBoardPage() {
             lineHeight: 1.5,
           }}
         >
-          * 파랑=내 수업 · 검정=다른 수업 · 주황=연습실 · 빨강=근무 차단 · 회색=운영 차단 · 연한 파랑=근무 가능
+          * 파랑=내 수업 · 검정=다른 수업 · 주황=연습실 · 빨강=근무 차단 · 회색=운영 차단 ·
+          연한 파랑=근무 가능
         </div>
       </div>
+
+      {selectedLesson && (
+        <LessonInfoModal lesson={selectedLesson} onClose={() => setSelectedLesson(null)} />
+      )}
     </TeacherShell>
+  );
+}
+
+function LessonInfoModal({
+  lesson,
+  onClose,
+}: {
+  lesson: LessonRow;
+  onClose: () => void;
+}) {
+  const classLabel = `${getDeviceLabel(lesson.device_type)} ${getClassTypeLabel(
+    lesson.class_type
+  )}`.trim();
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 380,
+          background: "#fff",
+          borderRadius: 20,
+          padding: 20,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 18,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 1000, color: "#111" }}>
+            수강생 정보
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              fontWeight: 900,
+              color: "#666",
+              fontSize: 13,
+            }}
+          >
+            닫기
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 14 }}>
+          <InfoItem label="이름" value={lesson.student_name || "-"} />
+          <InfoItem label="전화번호" value={lesson.student_phone || "-"} />
+          <InfoItem label="수강권" value={classLabel || "-"} />
+          <InfoItem
+            label="회차"
+            value={
+              lesson.lesson_no && lesson.total_lessons
+                ? `${lesson.lesson_no}/${lesson.total_lessons}`
+                : lesson.lesson_no
+                ? `${lesson.lesson_no}회`
+                : "-"
+            }
+          />
+          <InfoItem
+            label="수업 시간"
+            value={`${lesson.lesson_date} ${clampHHMM(lesson.lesson_time)} · ${
+              lesson.room_name || "-"
+            }`}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "#6b7280",
+          fontWeight: 800,
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontSize: 15,
+          fontWeight: 900,
+          color: "#111",
+          wordBreak: "break-word",
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -1138,7 +1266,13 @@ function LegendChip({
   );
 }
 
-function btnGhost(isMobile?: boolean): React.CSSProperties {
+const ellipsisStyle: CSSProperties = {
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+function btnGhost(isMobile?: boolean): CSSProperties {
   return {
     padding: isMobile ? "8px 9px" : "8px 10px",
     borderRadius: 10,
@@ -1149,7 +1283,8 @@ function btnGhost(isMobile?: boolean): React.CSSProperties {
     fontSize: isMobile ? 12 : 13,
   };
 }
-function btnPrimary(isMobile?: boolean): React.CSSProperties {
+
+function btnPrimary(isMobile?: boolean): CSSProperties {
   return {
     padding: isMobile ? "8px 10px" : "8px 12px",
     borderRadius: 10,
