@@ -33,6 +33,8 @@ type ClassListRow = {
   voucher_valid_from?: string | null;
   voucher_valid_until?: string | null;
   practice_open_from?: string | null;
+  extension_uses_used?: number | null;
+  extension_uses_total?: number | null;
 };
 
 function classTypeLabel(type: string | null, device?: string | null) {
@@ -103,7 +105,7 @@ function isOverlapRange(
   return true;
 }
 
-const DESKTOP_GRID = "220px 290px 80px 90px 80px 95px 105px 130px 180px";
+const DESKTOP_GRID = "220px 290px 80px 90px 80px 95px 105px 90px 130px 180px";
 
 export default function AdminClassesListPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
@@ -404,6 +406,7 @@ export default function AdminClassesListPage() {
                   "고정홀",
                   "레슨변경수",
                   "강제변경수",
+                  "연장횟수",
                   "담당선생님",
                   "관리",
                 ].map((h) => (
@@ -504,6 +507,12 @@ export default function AdminClassesListPage() {
                   <div style={cellStrong()}>{r.change_count ?? 0}회</div>
 
                   <div style={cellStrong()}>{r.forced_change_count ?? 0}회</div>
+
+                  <div style={cellStrong()}>
+                    {String(r.class_type ?? "").toLowerCase().includes("3month")
+                      ? `${r.extension_uses_used ?? 0}/${r.extension_uses_total ?? 1}회`
+                      : "-"}
+                  </div>
 
                   <div
                     style={{
@@ -661,6 +670,14 @@ export default function AdminClassesListPage() {
                 <MobileInfoBox label="고정홀" value={r.fixed_room_name ?? "-"} />
                 <MobileInfoBox label="레슨변경수" value={`${r.change_count ?? 0}회`} />
                 <MobileInfoBox label="강제변경수" value={`${r.forced_change_count ?? 0}회`} />
+                <MobileInfoBox
+                  label="연장횟수"
+                  value={
+                    String(r.class_type ?? "").toLowerCase().includes("3month")
+                      ? `${r.extension_uses_used ?? 0}/${r.extension_uses_total ?? 1}회`
+                      : "-"
+                  }
+                />
                 <MobileInfoBox label="담당선생님" value={r.teacher_name ?? "-"} />
               </div>
 
