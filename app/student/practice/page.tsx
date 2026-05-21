@@ -10,7 +10,7 @@ import StudentTopNav from "@/components/student/StudentTopNav";
 ========================== */
 const BUSINESS_HOURS = {
   weekday: { start: 13, end: 23 },
-  weekend: { start: 12, end: 21 },
+  weekend: { start: 13, end: 21 },
 };
 
 const ROOMS = ["A", "B", "C"] as const;
