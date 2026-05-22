@@ -115,14 +115,6 @@ function hasActualLessonAtFixedSlot(
   return ownerLessonsAtSlot.has(`${studentId}|${teacherId}|${dateStr}|${time}`);
 }
 
-/**
- * 보호 규칙
- * - 다른 학생의 보호 슬롯이면 기본적으로 막기
- * - 단, 그 학생이 "그 날짜에 수강 기간 안에 있는데"
- *   실제로 그 고정 슬롯 시간에 수업이 없으면
- *   → 그 날짜만 예외적으로 열기
- * - 수강권/레슨이 아직 없어도 기본 보호 유지
- */
 function isProtectedSlot(
   dateStr: string,
   time: string,
@@ -143,11 +135,8 @@ function isProtectedSlot(
     if (slotTeacherId !== String(teacherId)) return false;
     if (slotDow !== dow) return false;
     if (slotTime !== time) return false;
-
-    // 본인 슬롯이면 막지 않음
     if (slotStudentId === String(currentStudentId)) return false;
 
-    // 다른 학생의 보호 슬롯
     const inClassPeriod = hasClassCoveringDate(slotStudentId, dateStr, classWindowsByStudent);
 
     const hasLessonThere = hasActualLessonAtFixedSlot(
@@ -158,8 +147,6 @@ function isProtectedSlot(
       ownerLessonsAtSlot
     );
 
-    // 수강 기간 안인데 그 날짜 원래 고정 시간에 수업이 없으면
-    // -> 변경해서 비운 날짜로 보고 예외적으로 열어줌
     if (inClassPeriod && !hasLessonThere) {
       return false;
     }
@@ -189,6 +176,7 @@ export async function GET(req: Request) {
     { data: adminBlocks, error: bErr },
     { data: lessonsTeacher, error: lErrTeacher },
     { data: changeBlocks, error: cbErr },
+    { data: dateChangeBlocks, error: dcbErr },
     { data: fixedSlots, error: fsErr },
   ] = await Promise.all([
     supabaseServer
@@ -236,6 +224,14 @@ export async function GET(req: Request) {
       .eq("is_active", true),
 
     supabaseServer
+      .from("teacher_change_date_blocks")
+      .select("block_date, start_time, end_time, is_active")
+      .eq("teacher_id", teacher_id)
+      .eq("is_active", true)
+      .gte("block_date", from)
+      .lte("block_date", to),
+
+    supabaseServer
       .from("fixed_schedule_slots")
       .select("student_id, teacher_id, weekday, lesson_time, hold_for_renewal")
       .eq("teacher_id", teacher_id)
@@ -248,6 +244,7 @@ export async function GET(req: Request) {
   if (bErr) return json({ error: bErr.message }, 500);
   if (lErrTeacher) return json({ error: lErrTeacher.message }, 500);
   if (cbErr) return json({ error: cbErr.message }, 500);
+  if (dcbErr) return json({ error: dcbErr.message }, 500);
   if (fsErr) return json({ error: fsErr.message }, 500);
 
   const roomIds = (rooms ?? []).map((r: any) => String(r.id));
@@ -289,7 +286,6 @@ export async function GET(req: Request) {
     availByDow.set(dow, arr);
   });
 
-  // room blocked by lessons
   const lessonBlocked = new Set<string>();
   (lessonsAll ?? []).forEach((l: any) => {
     if (isCanceledStatus(l.status)) return;
@@ -300,7 +296,6 @@ export async function GET(req: Request) {
     if (d && t && rid) lessonBlocked.add(`${d}|${t}|${rid}`);
   });
 
-  // room blocked by admin block
   const adminBlockBlocked = new Set<string>();
   (adminBlocks ?? []).forEach((r: any) => {
     const kind = normalizeReservationKind(r.reservation_kind);
@@ -317,10 +312,7 @@ export async function GET(req: Request) {
 
   const roomBlocked = new Set([...lessonBlocked, ...adminBlockBlocked]);
 
-  // teacher busy
   const teacherBusy = new Set<string>();
-
-  // 고정 슬롯 주인이 실제 그 날짜/시간에 해당 강사 슬롯을 쓰는지
   const ownerLessonsAtSlot = new Set<string>();
 
   (lessonsTeacher ?? []).forEach((l: any) => {
@@ -352,6 +344,10 @@ export async function GET(req: Request) {
       (b: any) => normalizeDow(Number(b.weekday)) === dow
     );
 
+    const dateChangeBlocksForDay = (dateChangeBlocks ?? []).filter(
+      (b: any) => String(b.block_date).slice(0, 10) === dateStr
+    );
+
     const times: string[] = [];
     const rooms_by_time: any = {};
 
@@ -359,13 +355,12 @@ export async function GET(req: Request) {
       for (let m = Math.ceil(w.s / 60) * 60; m + 60 <= w.e; m += 60) {
         const t = minToTime(m);
 
-        // 같은 선생님이 이미 그 시간에 수업 있으면 룸 달라도 막음
         if (teacherBusy.has(`${dateStr}|${t}`)) continue;
 
-        // 강사 변경 차단 시간 제외
         if (isBlockedByChangeBlock(t, changeBlocksForDay as any)) continue;
 
-        // 다른 학생의 보호 슬롯이면 제외
+        if (isBlockedByChangeBlock(t, dateChangeBlocksForDay as any)) continue;
+
         if (
           isProtectedSlot(
             dateStr,

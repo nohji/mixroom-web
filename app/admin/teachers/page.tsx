@@ -29,6 +29,16 @@ type ChangeBlock = {
   is_active: boolean;
 };
 
+type DateChangeBlock = {
+  id: string;
+  teacher_id: string;
+  block_date: string;
+  start_time: string;
+  end_time: string;
+  reason: string | null;
+  is_active: boolean;
+};
+
 const weekdayLabel = ["일", "월", "화", "수", "목", "금", "토"];
 
 function hhmm(t: string) {
@@ -105,12 +115,27 @@ export default function AdminTeachersPage() {
   const [blockEndTime, setBlockEndTime] = useState("14:00");
   const [blockReason, setBlockReason] = useState("");
 
+  const [dateBlockRows, setDateBlockRows] = useState<DateChangeBlock[]>([]);
+  const [dateBlockLoading, setDateBlockLoading] = useState(false);
+
+  const [blockDate, setBlockDate] = useState<string>(todayYmd());
+  const [dateBlockStartTime, setDateBlockStartTime] = useState("13:00");
+  const [dateBlockEndTime, setDateBlockEndTime] = useState("14:00");
+  const [dateBlockReason, setDateBlockReason] = useState("");
+
   useEffect(() => {
     if (toMin(blockEndTime) <= toMin(blockStartTime)) {
       const next = HOUR_OPTIONS.find((t) => toMin(t) > toMin(blockStartTime));
       if (next) setBlockEndTime(next);
     }
   }, [blockStartTime, blockEndTime]);
+
+  useEffect(() => {
+    if (toMin(dateBlockEndTime) <= toMin(dateBlockStartTime)) {
+      const next = HOUR_OPTIONS.find((t) => toMin(t) > toMin(dateBlockStartTime));
+      if (next) setDateBlockEndTime(next);
+    }
+  }, [dateBlockStartTime, dateBlockEndTime]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth <= 900);
@@ -227,11 +252,12 @@ export default function AdminTeachersPage() {
   }, []);
 
   useEffect(() => {
-    if (!teacherId) return;
+  if (!teacherId) return;
     loadAvailabilities(teacherId);
     loadChangeBlocks(teacherId);
+    loadDateChangeBlocks(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teacherId]);
+}, [teacherId]);
 
   const addRow = async () => {
     if (!teacherId) return;
@@ -369,6 +395,97 @@ export default function AdminTeachersPage() {
     }
   };
 
+  const loadDateChangeBlocks = async (tid: string) => {
+    if (!tid) return;
+    if (!(await ensureLoggedIn())) return;
+  
+    setDateBlockLoading(true);
+    try {
+      const j = await adminFetch(
+        `/api/admin/teacher-change-date-blocks?teacherId=${encodeURIComponent(tid)}`,
+        { method: "GET" }
+      );
+  
+      const list = Array.isArray(j?.rows) ? (j.rows as DateChangeBlock[]) : [];
+      setDateBlockRows(list);
+    } catch (e: any) {
+      alert(e?.message ?? "하루 변경 차단 조회 실패");
+      setDateBlockRows([]);
+    } finally {
+      setDateBlockLoading(false);
+    }
+  };
+  
+  const addDateChangeBlock = async () => {
+    if (!teacherId) return;
+    if (!(await ensureLoggedIn())) return;
+  
+    if (!blockDate) {
+      alert("차단 날짜를 선택해줘!");
+      return;
+    }
+  
+    if (toMin(dateBlockStartTime) >= toMin(dateBlockEndTime)) {
+      alert("시간 오류: 시작시간은 종료시간보다 빨라야 해요.");
+      return;
+    }
+  
+    try {
+      await adminFetch(`/api/admin/teacher-change-date-blocks`, {
+        method: "POST",
+        body: JSON.stringify({
+          teacherId,
+          blockDate,
+          startTime: `${dateBlockStartTime}:00`,
+          endTime: `${dateBlockEndTime}:00`,
+          reason: dateBlockReason || null,
+          isActive: true,
+        }),
+      });
+  
+      setDateBlockReason("");
+      await loadDateChangeBlocks(teacherId);
+    } catch (e: any) {
+      alert(e?.message ?? "하루 변경 차단 추가 실패");
+    }
+  };
+  
+  const toggleDateBlockActive = async (id: string, next: boolean) => {
+    if (!(await ensureLoggedIn())) return;
+  
+    try {
+      await adminFetch(`/api/admin/teacher-change-date-blocks`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          id,
+          isActive: next,
+        }),
+      });
+  
+      setDateBlockRows((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, is_active: next } : r))
+      );
+    } catch (e: any) {
+      alert(e?.message ?? "하루 변경 차단 상태 변경 실패");
+    }
+  };
+  
+  const removeDateChangeBlock = async (id: string) => {
+    if (!confirm("삭제할까요?")) return;
+    if (!(await ensureLoggedIn())) return;
+  
+    try {
+      await adminFetch(`/api/admin/teacher-change-date-blocks`, {
+        method: "DELETE",
+        body: JSON.stringify({ id }),
+      });
+  
+      setDateBlockRows((prev) => prev.filter((r) => r.id !== id));
+    } catch (e: any) {
+      alert(e?.message ?? "하루 변경 차단 삭제 실패");
+    }
+  };
+
   const selectedTeacherName = useMemo(() => {
     return teachers.find((t) => t.id === teacherId)?.name ?? "(이름 없음)";
   }, [teachers, teacherId]);
@@ -413,6 +530,7 @@ export default function AdminTeachersPage() {
               if (!teacherId) return;
               loadAvailabilities(teacherId);
               loadChangeBlocks(teacherId);
+              loadDateChangeBlocks(teacherId);
             }}
               style={{
                 ...ghostButton,
@@ -834,6 +952,134 @@ export default function AdminTeachersPage() {
                         width: "100%",
                         justifyContent: "center",
                       }}
+                    >
+                      삭제
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+        <div style={{ height: 14 }} />
+
+        <section style={cardStyle}>
+          <div style={sectionTitleStyle}>특정 날짜 변경 차단</div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(4, minmax(0, 1fr))",
+              gap: 10,
+            }}
+          >
+            <Field label="차단 날짜">
+              <input
+                type="date"
+                value={blockDate}
+                onChange={(e) => setBlockDate(e.target.value)}
+                style={{ ...controlStyle, width: "100%" }}
+              />
+            </Field>
+
+            <Field label="시작 시간">
+              <select
+                value={dateBlockStartTime}
+                onChange={(e) => setDateBlockStartTime(e.target.value)}
+                style={{ ...controlStyle, width: "100%" }}
+              >
+                {HOUR_OPTIONS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="종료 시간">
+              <select
+                value={dateBlockEndTime}
+                onChange={(e) => setDateBlockEndTime(e.target.value)}
+                style={{ ...controlStyle, width: "100%" }}
+              >
+                {HOUR_OPTIONS.filter((t) => toMin(t) > toMin(dateBlockStartTime)).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="사유">
+              <input
+                value={dateBlockReason}
+                onChange={(e) => setDateBlockReason(e.target.value)}
+                placeholder="예: 하루 일정 / 행사 / 개인 사정"
+                style={{ ...controlStyle, width: "100%" }}
+              />
+            </Field>
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={addDateChangeBlock}
+              style={{
+                ...darkButton,
+                width: isMobile ? "100%" : "auto",
+                justifyContent: "center",
+              }}
+            >
+              하루 차단 추가
+            </button>
+
+            <div style={{ color: "#666", fontSize: 13 }}>
+              * 선택한 날짜 하루만 <b>수업 변경 후보 시간에서 제외</b>돼요.
+            </div>
+          </div>
+
+          <div style={{ height: 14 }} />
+
+          {dateBlockLoading ? (
+            <p style={{ color: "#111" }}>불러오는 중...</p>
+          ) : dateBlockRows.length === 0 ? (
+            <p style={{ color: "#666" }}>등록된 하루 차단 시간이 없습니다.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {dateBlockRows.map((r) => (
+                <div
+                  key={r.id}
+                  style={{
+                    border: "1px solid #e5e5e5",
+                    borderRadius: 14,
+                    padding: 14,
+                    background: "#fff",
+                    display: "grid",
+                    gap: 12,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: isMobile ? 15 : 16 }}>
+                      {r.block_date} · {hhmm(r.start_time)} ~ {hhmm(r.end_time)}
+                    </div>
+
+                    <div style={{ color: "#555", fontSize: 13, marginTop: 6 }}>
+                      사유: <b style={{ color: "#111" }}>{r.reason || "-"}</b>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {r.is_active ? <span style={badgeSuccess}>활성</span> : <span style={badgeWarn}>비활성</span>}
+
+                    <button
+                      onClick={() => toggleDateBlockActive(r.id, !r.is_active)}
+                      style={ghostButton}
+                    >
+                      {r.is_active ? "비활성화" : "활성화"}
+                    </button>
+
+                    <button
+                      onClick={() => removeDateChangeBlock(r.id)}
+                      style={dangerGhostButton}
                     >
                       삭제
                     </button>
