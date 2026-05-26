@@ -121,6 +121,10 @@ export default function StudentGuidePage() {
         </Item>
 
         <Item>
+          재등록 수강생의 경우 첫 레슨 기준 1주일 전부터 연습실 이용이 가능합니다
+        </Item>
+
+        <Item>
           <b>마지막 수업일까지 사용 가능</b>하며, 미사용 시간은 소멸됩니다.
         </Item>
 
@@ -139,13 +143,13 @@ export default function StudentGuidePage() {
         </Item>
         
         <Item>
-          단, <b>레슨 당일 출석한 수강생</b>에 한해
+          <b>당일 레슨이 있는 경우</b>
           <br />
-          연습실이 비어있는 경우 <b>당일 예약이 가능</b>합니다.
+          연습실이 비어있는 경우 <b>당일 예약도 가능</b>합니다.
           <br />
           당일 연습실 이용을 원하시는 경우
           <br />
-          <b>데스크 또는 담당 강사님께 문의</b>해 주세요.
+          <b>안내데스크 또는 담당 강사님께 편하게 문의</b>해 주세요.
         </Item>
 
         <Item>
