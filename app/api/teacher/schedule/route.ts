@@ -195,6 +195,36 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: practiceErr.message }, { status: 500 });
     }
 
+    practiceRows?.forEach((r: any) => {
+      if (r.room_id) roomIds.push(r.room_id);
+    });
+
+    const { data: oneDayRows, error: oneDayErr } = await supabaseServer
+      .from("oneday_lessons")
+      .select(`
+        id,
+        lesson_date,
+        lesson_time,
+        teacher_id,
+        room_id,
+        memo,
+        status
+      `)
+      .eq("teacher_id", teacherId)
+      .gte("lesson_date", from)
+      .lte("lesson_date", to)
+      .neq("status", "canceled")
+      .order("lesson_date", { ascending: true })
+      .order("lesson_time", { ascending: true });
+
+    if (oneDayErr) {
+      return NextResponse.json({ error: oneDayErr.message }, { status: 500 });
+    }
+
+    oneDayRows?.forEach((r: any) => {
+      if (r.room_id) roomIds.push(r.room_id);
+    });
+
     const practiceStudentIds = Array.from(
       new Set((practiceRows ?? []).map((r: any) => r.student_id).filter(Boolean))
     ) as string[];
@@ -217,10 +247,6 @@ export async function GET(req: Request) {
         studentProfiles = [...studentProfiles, ...(data ?? [])];
       }
     }
-
-    practiceRows?.forEach((r: any) => {
-      if (r.room_id) roomIds.push(r.room_id);
-    });
 
     const uniqueRoomIds = Array.from(new Set(roomIds.filter(Boolean))) as string[];
 
@@ -368,6 +394,21 @@ export async function GET(req: Request) {
       };
     });
 
+    const onedayLessons = (oneDayRows ?? []).map((row: any) => {
+      const room = row.room_id ? roomMap.get(row.room_id) : null;
+
+      return {
+        id: String(row.id),
+        lesson_date: row.lesson_date,
+        lesson_time: hhmm(row.lesson_time),
+        teacher_id: row.teacher_id ?? null,
+        room_id: row.room_id ?? null,
+        room_name: room?.name ?? "",
+        memo: row.memo ?? "",
+        status: row.status ?? "ACTIVE",
+      };
+    });
+
     const availability = (availabilityRows ?? []).map((row: any) => ({
       teacher_id: row.teacher_id,
       teacher_name: teacherProfile?.name ?? "강사",
@@ -395,6 +436,7 @@ export async function GET(req: Request) {
       availability,
       practice_reservations: practiceReservations,
       change_blocks: changeBlocks,
+      oneday_lessons: onedayLessons,
     });
   } catch (e: any) {
     return NextResponse.json(

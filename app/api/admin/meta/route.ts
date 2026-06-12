@@ -10,8 +10,9 @@ export async function GET() {
 
   const { data: teachers, error: tErr } = await supabaseServer
     .from("profiles")
-    .select("id, name, role, lesson_color")
+    .select("id, name, role, lesson_color, is_active")
     .eq("role", "teacher")
+    .eq("is_active", true)
     .order("name", { ascending: true });
 
   if (tErr) {
@@ -32,6 +33,7 @@ export async function GET() {
       id: String(x.id),
       name: String(x.name ?? "알 수 없음"),
       teacher_color: x.lesson_color ?? null,
+      is_active: x.is_active ?? null,
     })),
     rooms: (rooms ?? []).map((x: any) => ({
       id: String(x.id),

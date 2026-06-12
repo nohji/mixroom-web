@@ -174,6 +174,39 @@ export async function GET(req: Request) {
 
     const practiceRowsRaw: any[] = practiceData ?? [];
 
+    /* ---------------------------------
+     * 2.2) OneDay lessons
+     *  - 원데이 레슨도 주간표에 함께 내려줌
+     *  - teacher_id는 미지정(null) 가능
+     * --------------------------------- */
+    let oneDayQ = supabaseServer
+      .from("oneday_lessons")
+      .select(
+        `
+        id,
+        lesson_date,
+        lesson_time,
+        teacher_id,
+        room_id,
+        memo,
+        status
+      `
+      )
+      .gte("lesson_date", from)
+      .lte("lesson_date", to)
+      .order("lesson_date", { ascending: true })
+      .order("lesson_time", { ascending: true });
+
+    if (teacherId) oneDayQ = oneDayQ.eq("teacher_id", teacherId);
+    if (roomId) oneDayQ = oneDayQ.eq("room_id", roomId);
+
+    const { data: oneDayData, error: oneDayErr } = await oneDayQ;
+    if (oneDayErr) {
+      return NextResponse.json({ error: oneDayErr.message }, { status: 500 });
+    }
+
+    const oneDayRowsRaw: any[] = oneDayData ?? [];
+
     // practice에서 나온 student/room도 맵 구성에 포함
     practiceRowsRaw.forEach((r) => {
       if (r.room_id) roomIds.add(String(r.room_id));
@@ -183,12 +216,32 @@ export async function GET(req: Request) {
       if (c?.student_id) studentIds.add(String(c.student_id));
     });
 
+    // 원데이에서 나온 teacher/room도 맵 구성에 포함
+    oneDayRowsRaw.forEach((r) => {
+      if (r.teacher_id) teacherIdsFromLessons.add(String(r.teacher_id));
+      if (r.room_id) roomIds.add(String(r.room_id));
+    });
+
     /* ---------------------------------
      * 2.5) availability 대상 teacher ids
+     *  - profiles.is_active = true 인 강사만 근무칸에 표시
      * --------------------------------- */
     let targetTeacherIds: string[] = [];
+
     if (teacherId) {
-      targetTeacherIds = [teacherId];
+      const { data: activeTeacher, error: activeTeacherErr } = await supabaseServer
+        .from("profiles")
+        .select("id")
+        .eq("id", teacherId)
+        .eq("role", "teacher")
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (activeTeacherErr) {
+        return NextResponse.json({ error: activeTeacherErr.message }, { status: 500 });
+      }
+
+      targetTeacherIds = activeTeacher ? [teacherId] : [];
     } else {
       const { data: tRows, error: tErr } = await supabaseServer
         .from("teacher_availabilities")
@@ -199,9 +252,24 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: tErr.message }, { status: 500 });
       }
 
-      targetTeacherIds = Array.from(
-        new Set((tRows ?? []).map((x: any) => String(x.teacher_id)))
+      const candidateTeacherIds = Array.from(
+        new Set((tRows ?? []).map((x: any) => String(x.teacher_id)).filter(Boolean))
       );
+
+      if (candidateTeacherIds.length > 0) {
+        const { data: activeTeachers, error: activeErr } = await supabaseServer
+          .from("profiles")
+          .select("id")
+          .in("id", candidateTeacherIds)
+          .eq("role", "teacher")
+          .eq("is_active", true);
+
+        if (activeErr) {
+          return NextResponse.json({ error: activeErr.message }, { status: 500 });
+        }
+
+        targetTeacherIds = (activeTeachers ?? []).map((x: any) => String(x.id));
+      }
     }
 
     /* ---------------------------------
@@ -393,6 +461,31 @@ export async function GET(req: Request) {
     });
 
     /* ---------------------------------
+     * 6.2) OneDay lessons (frontend-friendly)
+     * --------------------------------- */
+    const oneday_lessons = oneDayRowsRaw.map((r) => {
+      const teacherId = r.teacher_id ? String(r.teacher_id) : null;
+      const rid = r.room_id ? String(r.room_id) : null;
+      const roomName = rid ? roomMap.get(rid) ?? rid : "미지정";
+
+      return {
+        id: String(r.id),
+        lesson_date: String(r.lesson_date ?? ""),
+        lesson_time: hhmm(r.lesson_time),
+
+        teacher_id: teacherId,
+        teacher_name: teacherId ? nameMap.get(teacherId) ?? "알 수 없음" : null,
+        teacher_color: teacherId ? colorMap.get(teacherId) ?? null : null,
+
+        room_id: rid,
+        room_name: roomName,
+
+        memo: r.memo ?? null,
+        status: r.status ?? "ACTIVE",
+      };
+    });
+
+    /* ---------------------------------
      * 7) Availability
      * --------------------------------- */
     const fromD = toDateStart(from);
@@ -472,6 +565,7 @@ export async function GET(req: Request) {
       overrideOn: lessons.filter((r) => r.allow_change_override === true).length,
       availability_events: availability.length,
       practice_total: practice_reservations.length,
+      oneday_total: oneday_lessons.length,
     };
 
     return NextResponse.json({
@@ -479,6 +573,7 @@ export async function GET(req: Request) {
       lessons,
       availability,
       practice_reservations,
+      oneday_lessons,
       range: { from, to },
       filters: { teacherId: teacherId ?? null, roomId: roomId ?? null },
     });

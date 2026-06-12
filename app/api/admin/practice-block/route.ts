@@ -4,7 +4,7 @@ import { supabaseServer } from "@/lib/supabaseServer";
 
 type Body = {
   date?: string;
-  time?: string;      // "HH:mm" or "HH:mm:ss"
+  time?: string; // "HH:mm" or "HH:mm:ss"
   room_id?: string;
   reason?: string | null;
 };
@@ -48,16 +48,17 @@ export async function POST(req: Request) {
     if (!date || !isYmd(date)) {
       return json({ error: "INVALID_DATE" }, 400);
     }
+
     if (!time) {
       return json({ error: "INVALID_TIME" }, 400);
     }
+
     if (!room_id) {
       return json({ error: "ROOM_REQUIRED" }, 400);
     }
 
     const end_time = addOneHour(time);
 
-    // 룸 존재 확인
     const { data: room, error: roomErr } = await supabaseServer
       .from("practice_rooms")
       .select("id, name")
@@ -67,7 +68,6 @@ export async function POST(req: Request) {
     if (roomErr) return json({ error: roomErr.message }, 500);
     if (!room) return json({ error: "ROOM_NOT_FOUND" }, 404);
 
-    // 같은 시간대 레슨 충돌 체크
     const { data: lessonHit, error: lessonErr } = await supabaseServer
       .from("lessons")
       .select("id")
@@ -82,7 +82,6 @@ export async function POST(req: Request) {
       return json({ error: "CONFLICT_WITH_LESSON" }, 409);
     }
 
-    // 같은 슬롯 예약/운영차단 충돌 체크
     const { data: practiceHit, error: practiceErr } = await supabaseServer
       .from("practice_reservations")
       .select("id, reservation_kind, status")
@@ -95,6 +94,20 @@ export async function POST(req: Request) {
     if (practiceErr) return json({ error: practiceErr.message }, 500);
     if ((practiceHit ?? []).length > 0) {
       return json({ error: "SLOT_ALREADY_OCCUPIED" }, 409);
+    }
+
+    const { data: oneDayHit, error: oneDayErr } = await supabaseServer
+      .from("oneday_lessons")
+      .select("id, status")
+      .eq("lesson_date", date)
+      .eq("room_id", room_id)
+      .eq("lesson_time", `${time}:00`)
+      .neq("status", "canceled")
+      .limit(1);
+
+    if (oneDayErr) return json({ error: oneDayErr.message }, 500);
+    if ((oneDayHit ?? []).length > 0) {
+      return json({ error: "CONFLICT_WITH_ONEDAY_LESSON" }, 409);
     }
 
     const { data, error } = await supabaseServer

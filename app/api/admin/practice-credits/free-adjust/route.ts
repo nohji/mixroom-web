@@ -18,7 +18,6 @@ export async function POST(req: Request) {
 
     const sb = supabaseServer;
 
-    // 바우처 조회
     const { data: voucher, error: voucherErr } = await sb
       .from("practice_vouchers")
       .select("id, student_id, quantity")
@@ -33,43 +32,78 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "voucher not found" }, { status: 404 });
     }
 
-    // 현재 무료 합계
     const { data: currentData, error: currentErr } = await sb
       .from("practice_credit_grants")
-      .select("hours")
+      .select("id, hours, remaining_hours, created_at")
       .eq("voucher_id", voucher_id)
-      .eq("grant_type", "ADMIN_ADD");
+      .eq("grant_type", "ADMIN_ADD")
+      .order("created_at", { ascending: false });
 
     if (currentErr) {
       return NextResponse.json({ error: currentErr.message }, { status: 500 });
     }
 
-    const current = (currentData ?? []).reduce(
-      (sum, row) => sum + Number(row.hours ?? 0),
+    const currentRemaining = (currentData ?? []).reduce(
+      (sum, row) => sum + Number(row.remaining_hours ?? 0),
       0
     );
 
-    const diff = target_hours - current;
+    const diff = target_hours - currentRemaining;
 
     if (diff === 0) {
       return NextResponse.json({ ok: true, changed: false });
     }
 
-    // 🔥 grant 이력
-    const { error: grantErr } = await sb.from("practice_credit_grants").insert({
-      student_id: voucher.student_id,
-      voucher_id,
-      grant_type: "ADMIN_ADD",
-      hours: diff,
-      remaining_hours: diff, // 🔥 에러 방지 핵심
-      memo: memo || "무료 시간 보정",
-    });
+    if (diff > 0) {
+      const { error: grantErr } = await sb.from("practice_credit_grants").insert({
+        student_id: voucher.student_id,
+        voucher_id,
+        grant_type: "ADMIN_ADD",
+        hours: diff,
+        remaining_hours: diff,
+        memo: memo || "무료 시간 추가",
+      });
 
-    if (grantErr) {
-      return NextResponse.json({ error: grantErr.message }, { status: 500 });
+      if (grantErr) {
+        return NextResponse.json({ error: grantErr.message }, { status: 500 });
+      }
     }
 
-    // 🔥 quantity 반영
+    if (diff < 0) {
+      let needToDeduct = Math.abs(diff);
+
+      for (const row of currentData ?? []) {
+        if (needToDeduct <= 0) break;
+
+        const remain = Number(row.remaining_hours ?? 0);
+        if (remain <= 0) continue;
+
+        const deduct = Math.min(remain, needToDeduct);
+        const nextRemain = remain - deduct;
+
+        const { error: updateErr } = await sb
+          .from("practice_credit_grants")
+          .update({
+            remaining_hours: nextRemain,
+            memo: memo || "무료 시간 차감",
+          })
+          .eq("id", row.id);
+
+        if (updateErr) {
+          return NextResponse.json({ error: updateErr.message }, { status: 500 });
+        }
+
+        needToDeduct -= deduct;
+      }
+
+      if (needToDeduct > 0) {
+        return NextResponse.json(
+          { error: "차감 가능한 무료 잔여 시간이 부족합니다." },
+          { status: 400 }
+        );
+      }
+    }
+
     const nextQty = Math.max(0, Number(voucher.quantity ?? 0) + diff);
 
     const { error: qtyErr } = await sb

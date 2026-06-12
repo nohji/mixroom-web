@@ -48,6 +48,17 @@ type PracticeRow = {
   status: string;
 };
 
+type OneDayLessonRow = {
+  id: string;
+  lesson_date: string;
+  lesson_time: string;
+  teacher_id: string | null;
+  room_id: string | null;
+  room_name: string | null;
+  memo: string | null;
+  status?: string | null;
+};
+
 type ChangeBlockRow = {
   id: string;
   teacher_id: string | null;
@@ -150,6 +161,7 @@ export default function TeacherScheduleBoardPage() {
   const PRACTICE_ORANGE = "#f97316";
   const BLOCK_RED = "#dc2626";
   const ADMIN_BLOCK_GRAY = "#6b7280";
+  const ONEDAY_PURPLE = "#7c3aed";
   const WORK_BG = "#eff6ff";
   const WORK_BORDER = "#bfdbfe";
   const OFF_BG = "#ffffff";
@@ -159,9 +171,11 @@ export default function TeacherScheduleBoardPage() {
   const [otherLessons, setOtherLessons] = useState<LessonRow[]>([]);
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [practice, setPractice] = useState<PracticeRow[]>([]);
+  const [onedayLessons, setOnedayLessons] = useState<OneDayLessonRow[]>([]);
   const [changeBlocks, setChangeBlocks] = useState<ChangeBlockRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null);
+  const [selectedOneDay, setSelectedOneDay] = useState<OneDayLessonRow | null>(null);
 
   const week = useMemo(() => {
     const ws = parseYmd(weekStart);
@@ -191,6 +205,7 @@ export default function TeacherScheduleBoardPage() {
           setOtherLessons([]);
           setAvailability([]);
           setPractice([]);
+          setOnedayLessons([]);
           setChangeBlocks([]);
           return;
         }
@@ -199,6 +214,19 @@ export default function TeacherScheduleBoardPage() {
         setOtherLessons((data.other_lessons ?? []) as LessonRow[]);
         setAvailability((data.availability ?? []) as AvailabilityRow[]);
         setPractice((data.practice_reservations ?? []) as PracticeRow[]);
+
+        const normalizedOneDay: OneDayLessonRow[] = ((data.oneday_lessons ?? data.one_day_lessons ?? []) as any[]).map((x) => ({
+          id: String(x.id),
+          lesson_date: String(x.lesson_date ?? x.date ?? ""),
+          lesson_time: x.lesson_time ? clampHHMM(x.lesson_time) : clampHHMM(x.time ?? ""),
+          teacher_id: x.teacher_id ?? null,
+          room_id: x.room_id ?? null,
+          room_name: x.room_name ?? x.room?.name ?? null,
+          memo: x.memo ?? x.note ?? null,
+          status: x.status ?? "ACTIVE",
+        }));
+
+        setOnedayLessons(normalizedOneDay);
         setChangeBlocks((data.change_blocks ?? []) as ChangeBlockRow[]);
       } finally {
         setLoading(false);
@@ -271,6 +299,16 @@ export default function TeacherScheduleBoardPage() {
       }
     });
 
+    onedayLessons.forEach((x) => {
+      if (String(x.status ?? "").toLowerCase() === "canceled") return;
+      const st = minutesOf(x.lesson_time);
+      const ed = st + DEFAULT_DURATION;
+      if (Number.isFinite(st) && Number.isFinite(ed)) {
+        mins.push(st);
+        maxs.push(ed);
+      }
+    });
+
     changeBlocks.forEach((b) => {
       const st = minutesOf(b.start_time);
       const ed = minutesOf(b.end_time);
@@ -294,7 +332,7 @@ export default function TeacherScheduleBoardPage() {
     }
 
     return { minM, maxM };
-  }, [myLessons, otherLessons, availability, practice, changeBlocks]);
+  }, [myLessons, otherLessons, availability, practice, onedayLessons, changeBlocks]);
 
   const slotTimes = useMemo(() => {
     const arr: string[] = [];
@@ -361,6 +399,23 @@ export default function TeacherScheduleBoardPage() {
 
     return m;
   }, [practice]);
+
+  const oneDayBySlot = useMemo(() => {
+    const m = new Map<string, OneDayLessonRow[]>();
+
+    for (const x of onedayLessons) {
+      if (!x.lesson_date || !x.lesson_time) continue;
+      if (String(x.status ?? "").toLowerCase() === "canceled") continue;
+
+      const roomNorm = normalizeRoom(x.room_name);
+      const k = slotKey(x.lesson_date, x.lesson_time, roomNorm);
+      const arr = m.get(k) ?? [];
+      arr.push(x);
+      m.set(k, arr);
+    }
+
+    return m;
+  }, [onedayLessons]);
 
   const changeBlocksBySlot = useMemo(() => {
     const m = new Map<string, ChangeBlockRow[]>();
@@ -520,7 +575,7 @@ export default function TeacherScheduleBoardPage() {
               <div style={{ color: "#666", fontSize: 12, fontWeight: 900 }}>
                 {loading
                   ? "불러오는 중..."
-                  : `내 수업 ${myLessons.length} · 연습실 ${practice.length} · 근무차단 ${changeBlocks.length}`}
+                  : `내 수업 ${myLessons.length} · 원데이 ${onedayLessons.length} · 연습실 ${practice.length} · 근무차단 ${changeBlocks.length}`}
               </div>
             </>
           ) : (
@@ -564,7 +619,7 @@ export default function TeacherScheduleBoardPage() {
               >
                 {loading
                   ? "불러오는 중..."
-                  : `내 수업 ${myLessons.length} · 연습실 ${practice.length} · 근무차단 ${changeBlocks.length}`}
+                  : `내 수업 ${myLessons.length} · 원데이 ${onedayLessons.length} · 연습실 ${practice.length} · 근무차단 ${changeBlocks.length}`}
               </div>
             </div>
           )}
@@ -581,6 +636,7 @@ export default function TeacherScheduleBoardPage() {
             <LegendChip color={MY_BLUE} label="내 수업" isMobile={isMobile} />
             <LegendChip color={OTHER_BLACK} label="다른 수업" isMobile={isMobile} />
             <LegendChip color={PRACTICE_ORANGE} label="연습실" isMobile={isMobile} />
+            <LegendChip color={ONEDAY_PURPLE} label="원데이" isMobile={isMobile} />
             <LegendChip color={BLOCK_RED} label="근무 차단" isMobile={isMobile} />
             <LegendChip color={ADMIN_BLOCK_GRAY} label="운영 차단" isMobile={isMobile} />
             <LegendChip
@@ -971,6 +1027,64 @@ export default function TeacherScheduleBoardPage() {
                 });
               })}
 
+              {Array.from(oneDayBySlot.entries()).flatMap(([key, list]) => {
+                const [dateStr, hhmm, roomNorm] = key.split("|") as [
+                  string,
+                  string,
+                  "A" | "B" | "C"
+                ];
+                const colIndex = cols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
+                if (colIndex === -1) return [];
+
+                const stMin = minutesOf(hhmm);
+                const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
+
+                return list.map((x, idx) => (
+                  <button
+                    type="button"
+                    key={`oneday-${x.id}-${key}-${idx}`}
+                    onClick={() => setSelectedOneDay(x)}
+                    style={{
+                      gridColumn: colIndex + 2,
+                      gridRow: `${rowStart} / span 1`,
+                      margin: isMobile ? 2 : 3,
+                      borderRadius: isMobile ? 11 : 9,
+                      border: "2px solid rgba(0,0,0,0.12)",
+                      background: ONEDAY_PURPLE,
+                      color: "#fff",
+                      padding: isMobile ? "3px 4px" : "4px 6px",
+                      fontWeight: 1000,
+                      fontSize: isMobile ? 8 : 10,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "center",
+                      overflow: "hidden",
+                      zIndex: 9,
+                      opacity: 0.97,
+                      lineHeight: 1.05,
+                      cursor: "pointer",
+                      outline: "none",
+                      appearance: "none",
+                      textAlign: "left",
+                    }}
+                    title={`${x.lesson_date} ${clampHHMM(x.lesson_time)} · ${x.room_name || roomNorm}홀\n원데이 레슨${x.memo ? `\n메모: ${x.memo}` : ""}`}
+                  >
+                    <div style={ellipsisStyle}>원데이</div>
+                    <div
+                      style={{
+                        marginTop: 1,
+                        fontSize: isMobile ? 8 : 9,
+                        fontWeight: 800,
+                        opacity: 0.95,
+                        ...ellipsisStyle,
+                      }}
+                    >
+                      {isMobile ? clampHHMM(x.lesson_time) : x.memo?.trim() || clampHHMM(x.lesson_time)}
+                    </div>
+                  </button>
+                ));
+              })}
+
               {Array.from(myLessonsBySlot.entries()).flatMap(([key, list]) => {
                 const [dateStr, hhmm, roomNorm] = key.split("|") as [
                   string,
@@ -1092,7 +1206,7 @@ export default function TeacherScheduleBoardPage() {
             lineHeight: 1.5,
           }}
         >
-          * 파랑=내 수업 · 검정=다른 수업 · 주황=연습실 · 빨강=근무 차단 · 회색=운영 차단 ·
+          * 파랑=내 수업 · 보라=원데이 · 검정=다른 수업 · 주황=연습실 · 빨강=근무 차단 · 회색=운영 차단 ·
           연한 파랑=근무 가능
         </div>
       </div>
@@ -1100,7 +1214,85 @@ export default function TeacherScheduleBoardPage() {
       {selectedLesson && (
         <LessonInfoModal lesson={selectedLesson} onClose={() => setSelectedLesson(null)} />
       )}
+
+      {selectedOneDay && (
+        <OneDayInfoModal oneDay={selectedOneDay} onClose={() => setSelectedOneDay(null)} />
+      )}
     </TeacherShell>
+  );
+}
+
+
+function OneDayInfoModal({
+  oneDay,
+  onClose,
+}: {
+  oneDay: OneDayLessonRow;
+  onClose: () => void;
+}) {
+  const endM = minutesOf(oneDay.lesson_time) + 60;
+  const endTime = `${pad2(Math.floor(endM / 60))}:${pad2(endM % 60)}`;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 380,
+          background: "#fff",
+          borderRadius: 20,
+          padding: 20,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 18,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 1000, color: "#111" }}>
+            원데이 레슨
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              fontWeight: 900,
+              color: "#666",
+              fontSize: 13,
+            }}
+          >
+            닫기
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 14 }}>
+          <InfoItem label="시간" value={`${oneDay.lesson_date} ${clampHHMM(oneDay.lesson_time)} ~ ${endTime}`} />
+          <InfoItem label="홀" value={`${normalizeRoom(oneDay.room_name)}홀`} />
+          <InfoItem label="메모" value={oneDay.memo?.trim() || "-"} />
+        </div>
+      </div>
+    </div>
   );
 }
 

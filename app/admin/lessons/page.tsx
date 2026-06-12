@@ -63,10 +63,25 @@ type PracticeRow = {
   admin_block_reason?: string | null;
 };
 
+type OneDayLessonRow = {
+  id: string;
+  lesson_date: string;
+  lesson_time: string;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  teacher_color: string | null;
+  room_id: string | null;
+  room_name: string | null;
+  memo: string | null;
+  status?: string | null;
+};
+
 type SimpleTeacher = {
   id: string;
   name: string;
   teacher_color: string | null;
+  is_active?: boolean | null;
+  active?: boolean | null;
 };
 
 type SimpleRoom = { id: string; name: string };
@@ -175,8 +190,9 @@ export default function AdminLessonsHallSheetPage() {
 
   const HOUR_OPTIONS = useMemo(
     () =>
-      Array.from({ length: 24 }).map((_, i) => {
-        const hh = String(i).padStart(2, "0");
+      Array.from({ length: 10 }).map((_, i) => {
+        const hour = i + 13;
+        const hh = String(hour).padStart(2, "0");
         return `${hh}:00`;
       }),
     []
@@ -194,9 +210,11 @@ export default function AdminLessonsHallSheetPage() {
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [practice, setPractice] = useState<PracticeRow[]>([]);
+  const [onedayLessons, setOnedayLessons] = useState<OneDayLessonRow[]>([]);
 
   const [selectedLessonId, setSelectedLessonId] = useState("");
   const [selectedPracticeId, setSelectedPracticeId] = useState("");
+  const [selectedOneDayId, setSelectedOneDayId] = useState("");
 
   const selectedLesson = useMemo(
     () => lessons.find((l) => l.id === selectedLessonId) ?? null,
@@ -206,6 +224,11 @@ export default function AdminLessonsHallSheetPage() {
   const selectedPractice = useMemo(
     () => practice.find((p) => p.id === selectedPracticeId) ?? null,
     [practice, selectedPracticeId]
+  );
+
+  const selectedOneDay = useMemo(
+    () => onedayLessons.find((x) => x.id === selectedOneDayId) ?? null,
+    [onedayLessons, selectedOneDayId]
   );
 
   function normalizeReservationKind(v?: string | null) {
@@ -245,9 +268,24 @@ export default function AdminLessonsHallSheetPage() {
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [blockSaving, setBlockSaving] = useState(false);
   const [blockDate, setBlockDate] = useState("");
-  const [blockTime, setBlockTime] = useState("13:00");
+  const [blockTimes, setBlockTimes] = useState<string[]>([]);
   const [blockRoomId, setBlockRoomId] = useState("");
   const [blockReason, setBlockReason] = useState("");
+
+  const [oneDayModalOpen, setOneDayModalOpen] = useState(false);
+  const [oneDaySaving, setOneDaySaving] = useState(false);
+  const [oneDayCanceling, setOneDayCanceling] = useState(false);
+  const [oneDayDate, setOneDayDate] = useState("");
+  const [oneDayTimes, setOneDayTimes] = useState<string[]>([]);
+  const [oneDayRoomId, setOneDayRoomId] = useState("");
+  const [oneDayTeacherId, setOneDayTeacherId] = useState("");
+  const [oneDayMemo, setOneDayMemo] = useState("");
+
+  const [oneDayTeacherEditOpen, setOneDayTeacherEditOpen] = useState(false);
+  const [oneDayTeacherEditSaving, setOneDayTeacherEditSaving] = useState(false);
+  const [oneDayTeacherEditId, setOneDayTeacherEditId] = useState("");
+  const [oneDayTeacherEditTeacherId, setOneDayTeacherEditTeacherId] = useState("");
+  const [oneDayTeacherEditMemo, setOneDayTeacherEditMemo] = useState("");
 
   const isCancelMode = feStatus === STATUS_CANCELED;
 
@@ -271,6 +309,7 @@ export default function AdminLessonsHallSheetPage() {
       setLessons([]);
       setAvailability([]);
       setPractice([]);
+      setOnedayLessons([]);
       setLoading(false);
       return;
     }
@@ -304,6 +343,21 @@ export default function AdminLessonsHallSheetPage() {
     });
 
     setPractice(normalizedPractice);
+
+    const normalizedOneDay: OneDayLessonRow[] = ((data.oneday_lessons ?? data.one_day_lessons ?? []) as any[]).map((x) => ({
+      id: String(x.id),
+      lesson_date: x.lesson_date ?? x.date,
+      lesson_time: x.lesson_time ? clampHHMM(x.lesson_time) : clampHHMM(x.time ?? ""),
+      teacher_id: x.teacher_id ?? null,
+      teacher_name: x.teacher_name ?? x.teacher?.name ?? null,
+      teacher_color: x.teacher_color ?? x.teacher?.teacher_color ?? null,
+      room_id: x.room_id ?? null,
+      room_name: x.room_name ?? x.room?.name ?? null,
+      memo: x.memo ?? x.note ?? null,
+      status: x.status ?? "ACTIVE",
+    }));
+
+    setOnedayLessons(normalizedOneDay);
     setLoading(false);
   }, [week.from, week.to]);
 
@@ -341,10 +395,10 @@ export default function AdminLessonsHallSheetPage() {
   };
 
   useEffect(() => {
-    if (blockModalOpen && roomsAll.length === 0) {
+    if ((blockModalOpen || oneDayModalOpen) && roomsAll.length === 0) {
       loadMeta();
     }
-  }, [blockModalOpen, roomsAll.length]);
+  }, [blockModalOpen, oneDayModalOpen, roomsAll.length]);
 
   const getRoomIdByLetter = useCallback(
     (roomLetter: "A" | "B" | "C") => {
@@ -365,7 +419,7 @@ export default function AdminLessonsHallSheetPage() {
     }
 
     const presetDate = preset?.date ?? week.from;
-    const presetTime = preset?.time ? clampHHMM(preset.time) : "13:00";
+    const presetTime = preset?.time ? clampHHMM(preset.time) : "";
 
     let presetRoomId = preset?.roomId ?? "";
     if (!presetRoomId && preset?.roomName) {
@@ -374,42 +428,205 @@ export default function AdminLessonsHallSheetPage() {
     }
 
     setBlockDate(presetDate);
-    setBlockTime(presetTime || "13:00");
+    setBlockTimes(presetTime ? [presetTime] : []);
     setBlockRoomId(presetRoomId || getRoomIdByLetter("A"));
     setBlockReason("");
     setBlockModalOpen(true);
   };
 
   const saveBlock = async () => {
-    if (!blockDate || !blockTime || !blockRoomId) {
+    if (!blockDate || blockTimes.length === 0 || !blockRoomId) {
       alert("날짜/시간/룸은 필수야.");
       return;
     }
 
     setBlockSaving(true);
 
-    const res = await authFetch("/api/admin/practice-block", {
+    const results = await Promise.all(
+      blockTimes.map(async (time) => {
+        const res = await authFetch("/api/admin/practice-block", {
+          method: "POST",
+          body: JSON.stringify({
+            date: blockDate,
+            time,
+            room_id: blockRoomId,
+            reason: blockReason || null,
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        return { res, json, time };
+      })
+    );
+
+    const failed = results.find((x) => !x.res.ok);
+
+    if (failed) {
+      alert(failed.json.error ?? `${failed.time} 운영 차단 생성 실패`);
+      setBlockSaving(false);
+      return;
+    }
+
+    alert(`운영 차단 완료 (${blockTimes.length}개 시간)`);
+    setBlockModalOpen(false);
+    setBlockSaving(false);
+    setSelectedPracticeId("");
+    await load();
+  };
+
+  const openOneDayModal = async (preset?: {
+    date?: string;
+    time?: string;
+    roomName?: string | null;
+    roomId?: string | null;
+  }) => {
+    if (roomsAll.length === 0 || teachersAll.length === 0) {
+      await loadMeta();
+    }
+
+    const presetDate = preset?.date ?? week.from;
+    const presetTime = preset?.time ? clampHHMM(preset.time) : "";
+
+    let presetRoomId = preset?.roomId ?? "";
+    if (!presetRoomId && preset?.roomName) {
+      const letter = normalizeRoom(preset.roomName);
+      presetRoomId = getRoomIdByLetter(letter);
+    }
+
+    setOneDayDate(presetDate);
+    setOneDayTimes(presetTime ? [presetTime] : []);
+    setOneDayRoomId(presetRoomId || getRoomIdByLetter("A"));
+    setOneDayTeacherId("");
+    setOneDayMemo("");
+    setOneDayModalOpen(true);
+  };
+
+  const saveOneDayLesson = async () => {
+    if (!oneDayDate || oneDayTimes.length === 0 || !oneDayRoomId) {
+      alert("날짜/시간/홀은 필수야.");
+      return;
+    }
+
+    if (!oneDayMemo.trim()) {
+      alert("메모에 학생명과 휴대폰번호를 적어줘.");
+      return;
+    }
+
+    setOneDaySaving(true);
+
+    const results = await Promise.all(
+      oneDayTimes.map(async (time) => {
+        const res = await authFetch("/api/admin/oneday-lessons", {
+          method: "POST",
+          body: JSON.stringify({
+            lesson_date: oneDayDate,
+            lesson_time: time,
+            teacher_id: oneDayTeacherId || null,
+            room_id: oneDayRoomId,
+            memo: oneDayMemo.trim(),
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        return { res, json, time };
+      })
+    );
+
+    const failed = results.find((x) => !x.res.ok);
+
+    if (failed) {
+      alert(failed.json.error ?? `${failed.time} 원데이 레슨 생성 실패`);
+      setOneDaySaving(false);
+      return;
+    }
+
+    alert(`원데이 레슨 등록 완료 (${oneDayTimes.length}개 시간)`);
+    setOneDayModalOpen(false);
+    setOneDaySaving(false);
+    setSelectedOneDayId("");
+    await load();
+  };
+
+  const cancelOneDayLesson = async () => {
+    if (!selectedOneDay) return;
+
+    const ok = confirm("원데이 레슨을 취소/해제할까요?");
+    if (!ok) return;
+
+    setOneDayCanceling(true);
+
+    const res = await authFetch(`/api/admin/oneday-lessons/${selectedOneDay.id}/cancel`, {
       method: "POST",
       body: JSON.stringify({
-        date: blockDate,
-        time: blockTime,
-        room_id: blockRoomId,
-        reason: blockReason || null,
+        reason: "관리자 해제",
       }),
     });
 
     const json = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      alert(json.error ?? "운영 차단 생성 실패");
-      setBlockSaving(false);
+      alert(json.error ?? "원데이 레슨 해제 실패");
+      setOneDayCanceling(false);
       return;
     }
 
-    alert("운영 차단 완료");
-    setBlockModalOpen(false);
-    setBlockSaving(false);
-    setSelectedPracticeId("");
+    alert("원데이 레슨 해제 완료");
+    setOneDayCanceling(false);
+    setSelectedOneDayId("");
+    await load();
+  };
+
+  const oneDayTeacherErrorMessage = (error?: string) => {
+    if (error === "TEACHER_NOT_FOUND") return "강사를 찾을 수 없어요.";
+    if (error === "TEACHER_NOT_AVAILABLE") return "해당 강사는 이 시간에 근무시간이 아니에요.";
+    if (error === "TEACHER_CHANGE_BLOCKED") return "해당 강사는 이 시간에 수강변경 차단 시간이 있어요.";
+    if (error === "CONFLICT_WITH_TEACHER_LESSON") return "해당 강사는 같은 시간에 정규 레슨이 있어요.";
+    if (error === "CONFLICT_WITH_TEACHER_ONEDAY") return "해당 강사는 같은 시간에 다른 원데이 레슨이 있어요.";
+    if (error === "ALREADY_CANCELED") return "이미 해제된 원데이 레슨은 변경할 수 없어요.";
+    return error || "원데이 수정 실패";
+  };
+
+  const openOneDayTeacherEdit = async () => {
+    if (!selectedOneDay) return;
+
+    if (teachersAll.length === 0) {
+      await loadMeta();
+    }
+
+    setOneDayTeacherEditId(selectedOneDay.id);
+    setOneDayTeacherEditTeacherId(selectedOneDay.teacher_id ?? "");
+    setOneDayTeacherEditMemo(selectedOneDay.memo ?? "");
+    setOneDayTeacherEditOpen(true);
+  };
+
+  const saveOneDayTeacherEdit = async () => {
+    if (!oneDayTeacherEditId) {
+      alert("변경할 원데이 레슨을 찾을 수 없어요.");
+      return;
+    }
+
+    setOneDayTeacherEditSaving(true);
+
+    const res = await authFetch(`/api/admin/oneday-lessons/${oneDayTeacherEditId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        teacher_id: oneDayTeacherEditTeacherId || null,
+        memo: oneDayTeacherEditMemo.trim() || null,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(oneDayTeacherErrorMessage(json.error));
+      setOneDayTeacherEditSaving(false);
+      return;
+    }
+
+    alert("원데이 수정 완료");
+    setOneDayTeacherEditOpen(false);
+    setOneDayTeacherEditSaving(false);
+    setSelectedOneDayId(oneDayTeacherEditId);
     await load();
   };
 
@@ -658,6 +875,15 @@ export default function AdminLessonsHallSheetPage() {
       }
     });
 
+    onedayLessons.forEach((x) => {
+      const st = minutesOf(x.lesson_time);
+      const ed = st + DEFAULT_DURATION;
+      if (Number.isFinite(st) && Number.isFinite(ed)) {
+        mins.push(st);
+        maxs.push(ed);
+      }
+    });
+
     if (mins.length > 0 && maxs.length > 0) {
       minM = Math.min(...mins);
       maxM = Math.max(...maxs);
@@ -672,7 +898,7 @@ export default function AdminLessonsHallSheetPage() {
     }
 
     return { minM, maxM };
-  }, [lessons, availability, practice]);
+  }, [lessons, availability, practice, onedayLessons]);
 
   const slotTimes = useMemo(() => {
     const arr: string[] = [];
@@ -741,6 +967,28 @@ export default function AdminLessonsHallSheetPage() {
 
     return m;
   }, [practice]);
+
+  function getOneDayRoomNorm(x: OneDayLessonRow): "A" | "B" | "C" {
+    const roomName = x.room_name ?? (x.room_id ? roomNameById.get(x.room_id) : null) ?? "";
+    return normalizeRoom(roomName);
+  }
+
+  const oneDayBySlot = useMemo(() => {
+    const m = new Map<string, OneDayLessonRow[]>();
+
+    for (const x of onedayLessons) {
+      if (!x.lesson_date || !x.lesson_time) continue;
+      if (String(x.status ?? "").toLowerCase() === "canceled") continue;
+
+      const roomNorm = getOneDayRoomNorm(x);
+      const k = slotKey(x.lesson_date, x.lesson_time, roomNorm);
+      const arr = m.get(k) ?? [];
+      arr.push(x);
+      m.set(k, arr);
+    }
+
+    return m;
+  }, [onedayLessons, roomNameById]);
 
   type PlacedLesson = LessonRow & {
     colIndex: number;
@@ -950,6 +1198,7 @@ export default function AdminLessonsHallSheetPage() {
     d.setDate(d.getDate() - 7);
     setSelectedLessonId("");
     setSelectedPracticeId("");
+    setSelectedOneDayId("");
     setHistoryOpenFor("");
     setHoverTime("");
     setWeekStart(ymd(startOfWeek(d)));
@@ -960,6 +1209,7 @@ export default function AdminLessonsHallSheetPage() {
     d.setDate(d.getDate() + 7);
     setSelectedLessonId("");
     setSelectedPracticeId("");
+    setSelectedOneDayId("");
     setHistoryOpenFor("");
     setHoverTime("");
     setWeekStart(ymd(startOfWeek(d)));
@@ -968,6 +1218,7 @@ export default function AdminLessonsHallSheetPage() {
   const goThisWeek = () => {
     setSelectedLessonId("");
     setSelectedPracticeId("");
+    setSelectedOneDayId("");
     setHistoryOpenFor("");
     setHoverTime("");
 
@@ -1106,10 +1357,25 @@ export default function AdminLessonsHallSheetPage() {
             🚫 운영 차단
           </button>
 
+          <button
+            onClick={() => openOneDayModal()}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #2563eb",
+              background: "#2563eb",
+              color: "#fff",
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            🎧 원데이 레슨
+          </button>
+
           <div style={{ marginLeft: "auto", color: "#666", fontSize: 13, width: "100%" }}>
             {loading
               ? "불러오는 중..."
-              : `레슨 ${lessons.length}개 · 연습실 ${practice.length}개 · 강사 ${legendTeachers.length}명`}
+              : `레슨 ${lessons.length}개 · 원데이 ${onedayLessons.length}개 · 연습실 ${practice.length}개 · 강사 ${legendTeachers.length}명`}
           </div>
 
           <div
@@ -1246,7 +1512,7 @@ export default function AdminLessonsHallSheetPage() {
                 }}
               >
                 <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
-                  주황: 연습실 예약 / 빨강: 운영차단 / 모바일은 전체 요일이 가로 스크롤로 보이고, 요일 버튼 누르면 해당 날짜로 이동해요.
+                  파랑: 원데이 레슨 / 주황: 연습실 예약 / 빨강: 운영차단 / 모바일은 전체 요일이 가로 스크롤로 보이고, 요일 버튼 누르면 해당 날짜로 이동해요.
                 </div>
               </div>
             </>
@@ -1582,6 +1848,7 @@ export default function AdminLessonsHallSheetPage() {
                     onClick={() => {
                       setSelectedPracticeId(p.id);
                       setSelectedLessonId("");
+                      setSelectedOneDayId("");
                       setHistoryOpenFor("");
                     }}
                     style={{
@@ -1614,6 +1881,60 @@ export default function AdminLessonsHallSheetPage() {
               });
             })}
 
+            {Array.from(oneDayBySlot.entries()).flatMap(([key, list]) => {
+              const [dateStr, hhmm, roomNorm] = key.split("|") as [string, string, "A" | "B" | "C"];
+
+              const colIndex = displayCols.findIndex((c) => c.dateStr === dateStr && c.room === roomNorm);
+              if (colIndex === -1) return [];
+
+              const stMin = minutesOf(hhmm);
+              const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
+              const rowSpan = Math.max(1, Math.round(DEFAULT_DURATION / STEP_MIN));
+
+              return list.map((x) => {
+                const isSelected = selectedOneDayId === x.id;
+                const teacherName = x.teacher_name ?? "강사 미지정";
+                const blockTitle = `${x.lesson_date} ${clampHHMM(x.lesson_time)} · ${roomNorm}홀\n원데이 레슨 · ${teacherName}${x.memo ? `\n메모: ${x.memo}` : ""}`;
+
+                return (
+                  <button
+                    key={`${x.id}-${key}`}
+                    onClick={() => {
+                      setSelectedOneDayId(x.id);
+                      setSelectedPracticeId("");
+                      setSelectedLessonId("");
+                      setHistoryOpenFor("");
+                    }}
+                    style={{
+                      gridColumn: colIndex + (isMobile ? 2 : 3),
+                      gridRow: `${rowStart} / span ${rowSpan}`,
+                      margin: 4,
+                      borderRadius: 10,
+                      border: isSelected ? "2px solid #111" : "2px solid rgba(0,0,0,0.12)",
+                      background: "#2563eb",
+                      color: "#fff",
+                      padding: isMobile ? "4px 6px" : "6px 8px",
+                      fontWeight: 900,
+                      fontSize: isMobile ? 10 : 12,
+                      display: "flex",
+                      alignItems: "center",
+                      overflow: "hidden",
+                      whiteSpace: "nowrap",
+                      textOverflow: "ellipsis",
+                      zIndex: 8,
+                      opacity: 0.94,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      boxShadow: isSelected ? "0 6px 18px rgba(0,0,0,0.18)" : "none",
+                    }}
+                    title={blockTitle}
+                  >
+                    🎧 원데이
+                  </button>
+                );
+              });
+            })}
+
             {placedLessons.map((l) => {
               const isSelected = selectedLessonId === l.id;
               const teacherColor = pickTeacherColor(l.teacher_id, l.teacher_name, l.teacher_color);
@@ -1629,6 +1950,7 @@ export default function AdminLessonsHallSheetPage() {
                   onClick={() => {
                     setSelectedLessonId(l.id);
                     setSelectedPracticeId("");
+                    setSelectedOneDayId("");
                   }}
                   style={{
                     gridColumn: l.colIndex + (isMobile ? 2 : 3),
@@ -1785,7 +2107,7 @@ export default function AdminLessonsHallSheetPage() {
         </div>
 
         <div style={{ marginTop: 12 }}>
-          {!selectedLesson && !selectedPractice ? (
+          {!selectedLesson && !selectedPractice && !selectedOneDay ? (
             <div style={{ color: "#666", fontSize: 13 }}>블록 클릭하면 상세가 보여요.</div>
           ) : selectedLesson ? (
             <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
@@ -1863,6 +2185,90 @@ export default function AdminLessonsHallSheetPage() {
                     {selectedLesson.lesson_nth ? selectedLesson.lesson_nth : "?"}
                     {selectedLesson.total_lessons ? ` / ${selectedLesson.total_lessons}` : ""}
                   </b>
+                </div>
+              </div>
+            </div>
+          ) : selectedOneDay ? (
+            <div style={{ border: "1px solid #eee", borderRadius: 12, background: "#fff", padding: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <b>
+                  {selectedOneDay.lesson_date} {clampHHMM(selectedOneDay.lesson_time)} · {normalizeRoom(selectedOneDay.room_name)}홀 · 원데이 레슨
+                </b>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    onClick={openOneDayTeacherEdit}
+                    disabled={oneDayCanceling || oneDayTeacherEditSaving}
+                    style={{
+                      border: "1px solid #2563eb",
+                      background: "#2563eb",
+                      color: "#fff",
+                      borderRadius: 10,
+                      padding: "6px 10px",
+                      cursor: oneDayCanceling || oneDayTeacherEditSaving ? "not-allowed" : "pointer",
+                      fontWeight: 900,
+                      opacity: oneDayCanceling || oneDayTeacherEditSaving ? 0.7 : 1,
+                    }}
+                  >
+                    원데이 수정
+                  </button>
+
+                  <button
+                    onClick={cancelOneDayLesson}
+                    disabled={oneDayCanceling}
+                    style={{
+                      border: "1px solid #1d4ed8",
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      borderRadius: 10,
+                      padding: "6px 10px",
+                      cursor: oneDayCanceling ? "not-allowed" : "pointer",
+                      fontWeight: 900,
+                      opacity: oneDayCanceling ? 0.7 : 1,
+                    }}
+                  >
+                    {oneDayCanceling ? "해제 중..." : "원데이 해제"}
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedOneDayId("")}
+                    style={{
+                      border: "1px solid #ddd",
+                      background: "#fff",
+                      borderRadius: 10,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                    }}
+                  >
+                    선택 해제
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 13 }}>
+                <div>
+                  유형: <b>원데이 레슨</b>
+                </div>
+                <div>
+                  강사: <b>{selectedOneDay.teacher_name ?? "-"}</b>
+                </div>
+                <div>
+                  시간: <b>{clampHHMM(selectedOneDay.lesson_time)} ~ {`${pad2(Math.floor((minutesOf(selectedOneDay.lesson_time) + DEFAULT_DURATION) / 60))}:${pad2((minutesOf(selectedOneDay.lesson_time) + DEFAULT_DURATION) % 60)}`}</b>
+                </div>
+                <div>
+                  홀: <b>{normalizeRoom(selectedOneDay.room_name)}홀</b>
+                </div>
+                <div>
+                  메모: <b>{selectedOneDay.memo?.trim() || "-"}</b>
                 </div>
               </div>
             </div>
@@ -2282,24 +2688,49 @@ export default function AdminLessonsHallSheetPage() {
               </div>
 
               <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>시간</div>
-                <select
-                  value={blockTime}
-                  onChange={(e) => setBlockTime(e.target.value)}
-                  disabled={blockSaving}
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>시간 여러 개 선택</div>
+                <div
                   style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
                     border: "1px solid #ddd",
-                    fontWeight: 900,
+                    borderRadius: 10,
+                    padding: 10,
+                    maxHeight: 190,
+                    overflowY: "auto",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                    gap: 8,
                   }}
                 >
                   {HOUR_OPTIONS.map((t) => (
-                    <option key={t} value={t}>
+                    <label
+                      key={t}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontSize: 13,
+                        fontWeight: 900,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={blockTimes.includes(t)}
+                        disabled={blockSaving}
+                        onChange={(e) => {
+                          setBlockTimes((prev) =>
+                            e.target.checked
+                              ? Array.from(new Set([...prev, t])).sort()
+                              : prev.filter((x) => x !== t)
+                          );
+                        }}
+                      />
                       {t}
-                    </option>
+                    </label>
                   ))}
-                </select>
+                </div>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
+                  선택됨: {blockTimes.length > 0 ? blockTimes.join(", ") : "없음"}
+                </div>
               </div>
 
               <div style={{ display: "grid", gap: 6 }}>
@@ -2370,6 +2801,399 @@ export default function AdminLessonsHallSheetPage() {
                 }}
               >
                 {blockSaving ? "저장 중..." : "운영 차단 생성"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {oneDayModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 16,
+          }}
+          onClick={() => !oneDaySaving && setOneDayModalOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(560px, 96vw)",
+              borderRadius: 14,
+              background: "#fff",
+              border: "1px solid #eee",
+              padding: 14,
+              boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+              maxHeight: "86vh",
+              overflowY: "auto",
+              WebkitOverflowScrolling: "touch",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 1100, fontSize: 14 }}>🎧 원데이 레슨 추가</div>
+              <button
+                onClick={() => setOneDayModalOpen(false)}
+                disabled={oneDaySaving}
+                style={{
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  borderRadius: 10,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 12,
+                color: "#666",
+                fontWeight: 900,
+                lineHeight: "18px",
+              }}
+            >
+              선택한 날짜/시간/홀로 원데이 레슨을 등록해. 강사는 나중에 지정할 수 있고, 학생 계정은 연결하지 않고 메모에 학생명과 휴대폰번호를 적어 관리해요.
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>날짜</div>
+                <input
+                  type="date"
+                  value={oneDayDate}
+                  onChange={(e) => setOneDayDate(e.target.value)}
+                  disabled={oneDaySaving}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontWeight: 900,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>홀</div>
+                <select
+                  value={oneDayRoomId}
+                  onChange={(e) => setOneDayRoomId(e.target.value)}
+                  disabled={oneDaySaving || metaLoading}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontWeight: 900,
+                  }}
+                >
+                  <option value="">홀 선택</option>
+                  {roomsAll.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>강사(선택)</div>
+                <select
+                  value={oneDayTeacherId}
+                  onChange={(e) => setOneDayTeacherId(e.target.value)}
+                  disabled={oneDaySaving || metaLoading}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontWeight: 900,
+                  }}
+                >
+                  <option value="">미지정</option>
+                  {teachersAll
+                  .filter((t: any) => t.is_active !== false && t.active !== false)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>시간 여러 개 선택</div>
+              <div
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: 10,
+                  padding: 10,
+                  maxHeight: 190,
+                  overflowY: "auto",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 8,
+                }}
+              >
+                {HOUR_OPTIONS.map((t) => (
+                  <label
+                    key={t}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: 13,
+                      fontWeight: 900,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={oneDayTimes.includes(t)}
+                      disabled={oneDaySaving}
+                      onChange={(e) => {
+                        setOneDayTimes((prev) =>
+                          e.target.checked
+                            ? Array.from(new Set([...prev, t])).sort()
+                            : prev.filter((x) => x !== t)
+                        );
+                      }}
+                    />
+                    {t}
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>
+                선택됨: {oneDayTimes.length > 0 ? oneDayTimes.join(", ") : "없음"}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>메모</div>
+              <textarea
+                value={oneDayMemo}
+                onChange={(e) => setOneDayMemo(e.target.value)}
+                disabled={oneDaySaving}
+                placeholder={"예: 홍길동 / 010-0000-0000 / 컨트롤러 원데이"}
+                rows={4}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  fontWeight: 900,
+                  resize: "vertical",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setOneDayModalOpen(false)}
+                disabled={oneDaySaving}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 1000,
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={saveOneDayLesson}
+                disabled={oneDaySaving}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #2563eb",
+                  background: "#2563eb",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 1100,
+                }}
+              >
+                {oneDaySaving ? "저장 중..." : "원데이 레슨 생성"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {oneDayTeacherEditOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 16,
+          }}
+          onClick={() => !oneDayTeacherEditSaving && setOneDayTeacherEditOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(520px, 96vw)",
+              borderRadius: 14,
+              background: "#fff",
+              border: "1px solid #eee",
+              padding: 14,
+              boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 1100, fontSize: 14 }}>원데이 수정</div>
+              <button
+                onClick={() => setOneDayTeacherEditOpen(false)}
+                disabled={oneDayTeacherEditSaving}
+                style={{
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  borderRadius: 10,
+                  padding: "6px 10px",
+                  cursor: oneDayTeacherEditSaving ? "not-allowed" : "pointer",
+                  fontWeight: 900,
+                  opacity: oneDayTeacherEditSaving ? 0.7 : 1,
+                }}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 12,
+                color: "#666",
+                fontWeight: 900,
+                lineHeight: "18px",
+              }}
+            >
+              강사와 메모를 변경할 수 있어요. 강사를 지정하면 근무시간, 수강변경 차단 시간, 기존 레슨 충돌을 확인합니다.
+            </div>
+
+            {selectedOneDay ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 10,
+                  borderRadius: 12,
+                  border: "1px solid #eee",
+                  background: "#fafafa",
+                  fontSize: 12,
+                  lineHeight: "18px",
+                }}
+              >
+                <div>
+                  <b>일정</b>: {selectedOneDay.lesson_date} {clampHHMM(selectedOneDay.lesson_time)}
+                </div>
+                <div>
+                  <b>홀</b>: {normalizeRoom(selectedOneDay.room_name)}홀
+                </div>
+                <div>
+                  <b>현재 강사</b>: {selectedOneDay.teacher_name ?? "미정"}
+                </div>
+                <div>
+                  <b>현재 메모</b>: {selectedOneDay.memo?.trim() || "-"}
+                </div>
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>변경할 강사</div>
+              <select
+                value={oneDayTeacherEditTeacherId}
+                onChange={(e) => setOneDayTeacherEditTeacherId(e.target.value)}
+                disabled={oneDayTeacherEditSaving || metaLoading}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  fontWeight: 900,
+                }}
+              >
+                <option value="">미정</option>
+                {teachersAll
+                  .filter((t: any) => t.is_active !== false && t.active !== false)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 1000 }}>메모</div>
+              <textarea
+                value={oneDayTeacherEditMemo}
+                onChange={(e) => setOneDayTeacherEditMemo(e.target.value)}
+                disabled={oneDayTeacherEditSaving}
+                placeholder={"예: 홍길동 / 010-0000-0000 / 컨트롤러 원데이"}
+                rows={4}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  fontWeight: 900,
+                  resize: "vertical",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setOneDayTeacherEditOpen(false)}
+                disabled={oneDayTeacherEditSaving}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  cursor: oneDayTeacherEditSaving ? "not-allowed" : "pointer",
+                  fontWeight: 1000,
+                  opacity: oneDayTeacherEditSaving ? 0.7 : 1,
+                }}
+              >
+                취소
+              </button>
+
+              <button
+                onClick={saveOneDayTeacherEdit}
+                disabled={oneDayTeacherEditSaving}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #2563eb",
+                  background: "#2563eb",
+                  color: "#fff",
+                  cursor: oneDayTeacherEditSaving ? "not-allowed" : "pointer",
+                  fontWeight: 1100,
+                  opacity: oneDayTeacherEditSaving ? 0.7 : 1,
+                }}
+              >
+                {oneDayTeacherEditSaving ? "저장 중..." : "원데이 수정 저장"}
               </button>
             </div>
           </div>
