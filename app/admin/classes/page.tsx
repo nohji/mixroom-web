@@ -46,6 +46,19 @@ type ConflictDetail = {
   reasons: string[];
 };
 
+type FixedSlot = {
+  id: string;
+  student_id: string;
+  teacher_id: string;
+  room_id: string | null;
+  weekday: number;
+  lesson_time: string;
+  hold_for_renewal: boolean;
+  memo: string | null;
+  teacher?: { id: string; name: string | null } | null;
+  room?: { id: string; name: string | null } | null;
+};
+
 /* ===================== utils ===================== */
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -157,6 +170,10 @@ export default function AdminClassesPage() {
 
   const [msg, setMsg] = useState("");
   const [createMsg, setCreateMsg] = useState("");
+
+  // fixed schedule slot auto apply
+  const [fixedSlot, setFixedSlot] = useState<FixedSlot | null>(null);
+  const [loadingFixedSlot, setLoadingFixedSlot] = useState(false);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth <= 900);
@@ -283,6 +300,82 @@ export default function AdminClassesPage() {
     }
   };
 
+  const applyFixedSlotToLessons = (slot: FixedSlot) => {
+    const slotTime = String(slot.lesson_time ?? "").slice(0, 5);
+    const slotWeekday = Number(slot.weekday);
+    const slotTeacherId = String(slot.teacher_id ?? "");
+    const slotRoomId = String(slot.room_id ?? "");
+
+    if (!slotTime || Number.isNaN(slotWeekday)) return;
+
+    const firstDate = correctedFirstDate(startDate, slotWeekday);
+    const count = lessonCountByType(classType);
+
+    setWeekday(slotWeekday);
+    setDefaultWeekday(slotWeekday);
+
+    if (slotTeacherId) {
+      setDefaultTeacherId(slotTeacherId);
+    }
+
+    if (slotRoomId) {
+      setDefaultRoomId(slotRoomId);
+    }
+
+    setDefaultTime(slotTime);
+
+    setLessons(() => {
+      const next: LessonDraft[] = [];
+
+      for (let i = 0; i < count; i++) {
+        next.push({
+          idx: i + 1,
+          lesson_date: addWeeksYMD(firstDate, i),
+          teacher_id: slotTeacherId,
+          lesson_time: slotTime,
+          room_id: slotRoomId,
+          selected: true,
+        });
+      }
+
+      return next;
+    });
+
+    setConflicts([]);
+    setMsg("");
+    setCreateMsg("");
+  };
+
+  const loadFixedSlotByStudent = async (sid: string) => {
+    if (!sid) {
+      setFixedSlot(null);
+      return;
+    }
+
+    setLoadingFixedSlot(true);
+
+    try {
+      const res = await authFetch(
+        `/api/admin/fixed-schedules/by-student?studentId=${encodeURIComponent(sid)}`
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.item) {
+        setFixedSlot(null);
+        return;
+      }
+
+      const slot = data.item as FixedSlot;
+      setFixedSlot(slot);
+
+      if (mode === "create") {
+        applyFixedSlotToLessons(slot);
+      }
+    } finally {
+      setLoadingFixedSlot(false);
+    }
+  };
+
   useEffect(() => {
     loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -297,6 +390,21 @@ export default function AdminClassesPage() {
     if (mode === "edit" && studentId) {
       loadStudentClasses(studentId);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, studentId]);
+
+  useEffect(() => {
+    if (mode !== "create") {
+      setFixedSlot(null);
+      return;
+    }
+
+    if (!studentId) {
+      setFixedSlot(null);
+      return;
+    }
+
+    loadFixedSlotByStudent(studentId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, studentId]);
 
@@ -327,9 +435,9 @@ export default function AdminClassesPage() {
         next.push({
           idx: i + 1,
           lesson_date: date,
-          teacher_id: old?.teacher_id || defaultTeacherId || "",
-          lesson_time: old?.lesson_time || defaultTime,
-          room_id: old?.room_id || defaultRoomId || "",
+          teacher_id: defaultTeacherId || old?.teacher_id || "",
+          lesson_time: defaultTime || old?.lesson_time || "19:00",
+          room_id: defaultRoomId || old?.room_id || "",
           selected: old?.selected ?? true,
         });
       }
@@ -491,7 +599,12 @@ export default function AdminClassesPage() {
             <Field label="수강생 선택">
               <select
                 value={studentId}
-                onChange={(e) => setStudentId(e.target.value)}
+                onChange={(e) => {
+                  setStudentId(e.target.value);
+                  setMsg("");
+                  setCreateMsg("");
+                  setConflicts([]);
+                }}
                 style={{ ...inputStyle, width: "100%", minWidth: 0 }}
                 disabled={loadingUsers || students.length === 0}
               >
@@ -508,6 +621,38 @@ export default function AdminClassesPage() {
                 )}
               </select>
             </Field>
+
+            {mode === "create" && loadingFixedSlot && (
+              <div
+                style={{
+                  gridColumn: isMobile ? "auto" : "1 / -1",
+                  fontSize: 13,
+                  color: colors.textSub,
+                }}
+              >
+                고정 슬롯 확인 중...
+              </div>
+            )}
+
+            {mode === "create" && fixedSlot && (
+              <div
+                style={{
+                  gridColumn: isMobile ? "auto" : "1 / -1",
+                  marginTop: 2,
+                  padding: 10,
+                  borderRadius: 10,
+                  background: "#fff7ed",
+                  border: "1px solid #fed7aa",
+                  fontSize: 13,
+                  color: "#9a3412",
+                  lineHeight: 1.5,
+                }}
+              >
+                고정 슬롯 자동 적용됨: {weekdayLabel[fixedSlot.weekday]}요일 {String(fixedSlot.lesson_time).slice(0, 5)}
+                {fixedSlot.room?.name ? ` / ${fixedSlot.room.name}` : ""}
+                {fixedSlot.teacher?.name ? ` / ${fixedSlot.teacher.name}쌤` : ""}
+              </div>
+            )}
 
             {mode === "create" && (
               <>

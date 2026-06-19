@@ -24,6 +24,7 @@ type LessonRow = {
   total_lessons?: number | null;
   class_type?: string | null;
   device_type?: string | null;
+  is_oneday?: boolean;
 };
 
 type AvailabilityRow = {
@@ -922,6 +923,15 @@ export default function TeacherScheduleBoardPage() {
                 const rowStart = Math.floor((stMin - timeRange.minM) / STEP_MIN) + 1;
                 const p = list[0];
 
+                const isOtherOneDay = !!p.is_oneday;
+                const otherLabel = isOtherOneDay
+                  ? isMobile
+                    ? "원데이"
+                    : "원데이 있음"
+                  : isMobile
+                  ? "수업"
+                  : "수업 있음";
+
                 return [
                   <div
                     key={`other-${p.id}-${key}`}
@@ -945,7 +955,9 @@ export default function TeacherScheduleBoardPage() {
                       opacity: 0.95,
                       lineHeight: 1.05,
                     }}
-                    title={`${dateStr} ${hhmm} · ${p.room_name || roomNorm}홀\n다른 강사 수업`}
+                    title={`${dateStr} ${hhmm} · ${p.room_name || roomNorm}홀\n${
+                      isOtherOneDay ? "다른 강사 원데이" : "다른 강사 수업"
+                    }`}
                   >
                     <div
                       style={{
@@ -954,7 +966,7 @@ export default function TeacherScheduleBoardPage() {
                         textAlign: "center",
                       }}
                     >
-                      {isMobile ? "수업" : "수업 있음"}
+                      {otherLabel}
                     </div>
                   </div>,
                 ];

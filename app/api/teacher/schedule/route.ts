@@ -210,7 +210,6 @@ export async function GET(req: Request) {
         memo,
         status
       `)
-      .eq("teacher_id", teacherId)
       .gte("lesson_date", from)
       .lte("lesson_date", to)
       .neq("status", "canceled")
@@ -374,6 +373,36 @@ export async function GET(req: Request) {
       };
     });
 
+    const myOneDayRows = (oneDayRows ?? []).filter(
+      (row: any) => String(row.teacher_id ?? "") === String(teacherId)
+    );
+
+    const otherOneDayRows = (oneDayRows ?? []).filter(
+      (row: any) => String(row.teacher_id ?? "") !== String(teacherId)
+    );
+
+    const otherOneDayLessons = otherOneDayRows.map((row: any) => {
+      const room = row.room_id ? roomMap.get(row.room_id) : null;
+
+      return {
+        id: `oneday-${row.id}`,
+        lesson_date: row.lesson_date,
+        lesson_time: hhmm(row.lesson_time),
+        status: row.status ?? "ACTIVE",
+        allow_change_override: false,
+
+        teacher_id: row.teacher_id ?? null,
+        room_id: row.room_id ?? null,
+        room_name: room?.name ?? "",
+
+        student_id: null,
+        student_name: "원데이 있음",
+        is_oneday: true,
+      };
+    });
+
+    const blockedOtherLessons = [...otherLessons, ...otherOneDayLessons];
+
     const practiceReservations = (practiceRows ?? []).map((row: any) => {
       const room = row.room_id ? roomMap.get(row.room_id) : null;
       const sid = row.student_id ?? null;
@@ -394,7 +423,7 @@ export async function GET(req: Request) {
       };
     });
 
-    const onedayLessons = (oneDayRows ?? []).map((row: any) => {
+    const onedayLessons = myOneDayRows.map((row: any) => {
       const room = row.room_id ? roomMap.get(row.room_id) : null;
 
       return {
@@ -432,7 +461,7 @@ export async function GET(req: Request) {
       range: { from, to },
       teacherId,
       my_lessons: myLessons,
-      other_lessons: otherLessons,
+      other_lessons: blockedOtherLessons,
       availability,
       practice_reservations: practiceReservations,
       change_blocks: changeBlocks,
