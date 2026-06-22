@@ -1015,6 +1015,11 @@ export default function PracticeStudentPage() {
         연습실 예약 가능 기간: <b>{effectiveOpenFrom}</b> ~ <b>{reserveMaxYmd}</b>
         <br />
         * 당일 및 다음날 예약은 불가하며, 최대 30일 뒤까지만 신청할 수 있어요.
+        <br />
+        <br />
+        A홀 세라토만 가능 / B홀 세라토,레박 / C홀:세라토 레박
+        <br />
+        * 사용하시는 소프트웨어 확인 후 예약 부탁드립니다. 
       </div>
 
       <div

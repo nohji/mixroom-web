@@ -46,9 +46,9 @@ export default function StudentGuidePage() {
         <div style={{ fontSize: 14, lineHeight: 1.6, color: "#111", fontWeight: 600 }}>
          📌 수강권 변경, 연장 및 연습실 예약은 
          <br />
-         영업일 기준 오후 6시~7시 사이 일괄 승인됩니다.
+          승인은 오후 2시와 오후 7시에 일괄 진행됩니다
           <br />
-          승인 결과는 오후 7시 이후 확인 부탁드립니다.
+          승인 결과는 오후 2시와 오후 7시에 확인 부탁드립니다.
         </div>
 
       </div>
@@ -180,6 +180,34 @@ export default function StudentGuidePage() {
           문의해 주세요.
         </Item>
 
+        <Divider />
+        <div
+          style={{
+            background: "#111",
+            color: "#fff",
+            padding: 12,
+            borderRadius: 12,
+            marginBottom: 12,
+            fontWeight: 1000,
+            fontSize: 14,
+          }}
+        >
+          2인 이상 연습실 사용
+        </div>
+
+        <Item>
+          수강생분들끼리 함께 이용하시거나, 지인과 동반 이용하실 경우  <br />
+          예약 전 카카오채널로 문의 부탁드립니다.
+        </Item>
+        <Item>
+          수강생분들끼리 함께 이용 시 각자 이용 시간이 동일하게 차감됩니다.
+        </Item>
+        <Item>
+          비수강생(지인) 동반 시 1인당 시간당 1만 원의 추가 비용이 발생합니다.
+        </Item>
+        <Item>
+        연습실은 본인을 포함하여 최대 2인까지 이용 가능합니다.
+        </Item>
         <Divider />
 
         <Item>
