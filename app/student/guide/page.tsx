@@ -181,7 +181,7 @@ export default function StudentGuidePage() {
         </Item>
 
         <Divider />
-        <div
+        {/* <div
           style={{
             background: "#111",
             color: "#fff",
@@ -207,7 +207,7 @@ export default function StudentGuidePage() {
         </Item>
         <Item>
         연습실은 본인을 포함하여 최대 2인까지 이용 가능합니다.
-        </Item>
+        </Item> */}
         <Divider />
 
         <Item>
