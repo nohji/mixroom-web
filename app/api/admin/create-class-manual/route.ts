@@ -187,12 +187,13 @@ export async function POST(req: Request) {
 
   const roomMap = new Map(rooms?.map((r: any) => [r.id, r]) ?? []);
 
-  /* ---------- preload availabilities ---------- */
   const teacherIds = [...new Set(normalized.map((l) => l.teacher_id))];
+  const roomIds = [...new Set(normalized.map((l) => l.room_id))];
   const dates = [...new Set(normalized.map((l) => l.lesson_date))];
   const timesHHMMSS = [...new Set(normalized.map((l) => toHHMMSS(l.lesson_time)))];
   const weekdays = [...new Set(normalized.map((l) => weekdayOf(l.lesson_date)))];
 
+  /* ---------- preload availabilities ---------- */
   const { data: avails, error: availErr } = await supabaseServer
     .from("teacher_availabilities")
     .select(
@@ -285,7 +286,7 @@ export async function POST(req: Request) {
 
   const { data: onedays, error: onedayErr } = await supabaseServer
     .from("oneday_lessons")
-    .select("lesson_date, lesson_time, room_id, teacher_id")
+    .select("lesson_date, lesson_time, room_id, teacher_id, status")
     .in("lesson_date", dates)
     .in("lesson_time", timesHHMMSS);
 
@@ -305,7 +306,7 @@ export async function POST(req: Request) {
 
   const { data: fixedSlots, error: fixedErr } = await supabaseServer
     .from("fixed_schedule_slots")
-    .select("id, teacher_id, room_id, weekday, lesson_time, hold_for_renewal")
+    .select("id, student_id, teacher_id, room_id, weekday, lesson_time, hold_for_renewal")
     .eq("hold_for_renewal", true)
     .in("weekday", weekdays)
     .in("lesson_time", timesHHMMSS);
@@ -339,6 +340,7 @@ export async function POST(req: Request) {
 
     const onedayHit = (onedays ?? []).find(
       (o: any) =>
+        String(o.status ?? "ACTIVE").toLowerCase() !== "canceled" &&
         o.lesson_date === l.lesson_date &&
         timeEq(o.lesson_time, l.lesson_time) &&
         (o.room_id === l.room_id || o.teacher_id === l.teacher_id)
@@ -376,18 +378,25 @@ export async function POST(req: Request) {
       reasons.push("해당 시간/룸에 연습실 예약이 있습니다.");
     }
 
-    const fixedHit = (fixedSlots ?? []).find(
-      (f: any) =>
-        f.weekday === wd &&
+    const fixedHit = (fixedSlots ?? []).find((f: any) => {
+      const sameSlot =
+        Number(f.weekday) === Number(wd) &&
         timeEq(f.lesson_time, l.lesson_time) &&
         (f.teacher_id === l.teacher_id ||
           f.room_id === null ||
-          f.room_id === l.room_id)
-    );
+          f.room_id === l.room_id);
+
+      if (!sameSlot) return false;
+
+      // 본인 고정슬롯이면 수강권 등록 가능
+      if (String(f.student_id) === String(studentId)) return false;
+
+      return true;
+    });
 
     if (fixedHit) {
       reasons.push(
-        "해당 시간은 고정 슬롯으로 등록된 시간입니다. 재등록 가능성이 있는 자리이므로 새 수강권을 등록할 수 없습니다."
+        "해당 시간은 다른 수강생의 고정 슬롯으로 등록된 시간입니다. 재등록 가능성이 있는 자리이므로 새 수강권을 등록할 수 없습니다."
       );
     }
 
@@ -416,20 +425,17 @@ export async function POST(req: Request) {
   const endDate = normalized[normalized.length - 1].lesson_date;
 
   /* ---------- renewal check ---------- */
-  const { data: existingClasses, error: existingClassErr } = await supabaseServer
+  const { data: oldClasses, error: oldClassErr } = await supabaseServer
     .from("classes")
     .select("id")
     .eq("student_id", studentId)
     .limit(1);
 
-  if (existingClassErr) {
-    return NextResponse.json(
-      { error: "RENEWAL_CHECK_FAILED", message: existingClassErr.message },
-      { status: 500 }
-    );
+  if (oldClassErr) {
+    return NextResponse.json({ error: oldClassErr.message }, { status: 500 });
   }
 
-  const isRenewal = (existingClasses?.length ?? 0) > 0;
+  const isRenewal = (oldClasses?.length ?? 0) > 0;
   const practiceOpenFrom = isRenewal ? addDaysYmd(startDate, -7) : startDate;
 
   const monthlyChangeLimit = CHANGE_LIMIT_BY_CLASS[classType];
@@ -517,7 +523,7 @@ export async function POST(req: Request) {
     success: true,
     classId,
     isRenewal,
-    practice_open_from: practiceOpenFrom,
+    practiceOpenFrom,
     lessons: normalized.map((l) => ({
       idx: l.idx,
       lesson_date: l.lesson_date,
