@@ -175,6 +175,7 @@ export async function GET(req: Request) {
     { data: lessonsAll, error: lErrAll },
     { data: adminBlocks, error: bErr },
     { data: lessonsTeacher, error: lErrTeacher },
+    { data: onedayLessons, error: odErr },
     { data: changeBlocks, error: cbErr },
     { data: dateChangeBlocks, error: dcbErr },
     { data: fixedSlots, error: fsErr },
@@ -218,6 +219,14 @@ export async function GET(req: Request) {
       .lte("lesson_date", to),
 
     supabaseServer
+      .from("oneday_lessons")
+      .select("lesson_date, lesson_time, teacher_id")
+      .eq("teacher_id", teacher_id)
+      .neq("status", "canceled")
+      .gte("lesson_date", from)
+      .lte("lesson_date", to),
+
+    supabaseServer
       .from("teacher_change_blocks")
       .select("weekday, start_time, end_time, is_active")
       .eq("teacher_id", teacher_id)
@@ -243,6 +252,7 @@ export async function GET(req: Request) {
   if (lErrAll) return json({ error: lErrAll.message }, 500);
   if (bErr) return json({ error: bErr.message }, 500);
   if (lErrTeacher) return json({ error: lErrTeacher.message }, 500);
+  if (odErr) return json({ error: odErr.message }, 500);
   if (cbErr) return json({ error: cbErr.message }, 500);
   if (dcbErr) return json({ error: dcbErr.message }, 500);
   if (fsErr) return json({ error: fsErr.message }, 500);
@@ -326,6 +336,16 @@ export async function GET(req: Request) {
     const sid = cls?.student_id ? String(cls.student_id) : "";
     if (sid && d && t) {
       ownerLessonsAtSlot.add(`${sid}|${teacher_id}|${d}|${t}`);
+    }
+  });
+
+  // 원데이 레슨에 강사가 지정된 경우, 해당 강사 시간은 학생 변경 가능 시간에서 제외
+  (onedayLessons ?? []).forEach((l: any) => {
+    const d = String(l.lesson_date ?? "").slice(0, 10);
+    const t = clampHHMM(String(l.lesson_time ?? ""));
+
+    if (d && t) {
+      teacherBusy.add(`${d}|${t}`);
     }
   });
 
