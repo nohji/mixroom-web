@@ -55,7 +55,9 @@ export async function POST(req: Request) {
 
   const room_id = String(body.room_id ?? "").trim();
   const date = String(body.date ?? "").trim();
-  const times = Array.isArray(body.times) ? body.times.map((x) => String(x).trim()) : [];
+  const times = Array.isArray(body.times)
+    ? body.times.map((x) => String(x).trim())
+    : [];
   const device_type = String(body.device_type ?? "controller").trim();
 
   if (!room_id) return json({ error: "ROOM_REQUIRED" }, 400);
@@ -73,10 +75,14 @@ export async function POST(req: Request) {
   if (times.length > 2) return json({ error: "MAX_2_HOURS" }, 400);
 
   const uniqueTimes = Array.from(new Set(times));
-  if (uniqueTimes.length !== times.length) return json({ error: "DUPLICATE_TIME" }, 400);
+  if (uniqueTimes.length !== times.length) {
+    return json({ error: "DUPLICATE_TIME" }, 400);
+  }
 
   for (const t of uniqueTimes) {
-    if (!isValidTimeFormat(t)) return json({ error: "INVALID_TIME_FORMAT" }, 400);
+    if (!isValidTimeFormat(t)) {
+      return json({ error: "INVALID_TIME_FORMAT" }, 400);
+    }
   }
 
   // voucher 조회
@@ -158,6 +164,34 @@ export async function POST(req: Request) {
       {
         error: "PROTECTED_SLOT",
         message: "해당 시간/홀은 보호된 고정 스케줄이 있어 예약할 수 없습니다.",
+      },
+      409
+    );
+  }
+
+  // 원데이 레슨 체크
+  // lesson_time이 DB에 13:00 또는 13:00:00 형태로 들어갈 수 있어서 둘 다 검사
+  const timeCandidates = Array.from(
+    new Set([...uniqueTimes, ...uniqueTimes.map(hhmmss)])
+  ).filter(Boolean);
+
+  const { data: onedayConflicts, error: onedayErr } = await supabaseServer
+    .from("oneday_lessons")
+    .select("id")
+    .eq("lesson_date", date)
+    .eq("room_id", room_id)
+    .in("lesson_time", timeCandidates)
+    .or("status.is.null,status.neq.canceled");
+
+  if (onedayErr) {
+    return json({ error: onedayErr.message }, 500);
+  }
+
+  if ((onedayConflicts ?? []).length > 0) {
+    return json(
+      {
+        error: "CONFLICT_WITH_ONEDAY",
+        message: "해당 시간에는 원데이 레슨이 있어 예약할 수 없습니다.",
       },
       409
     );

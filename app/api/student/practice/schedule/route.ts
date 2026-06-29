@@ -69,6 +69,7 @@ export async function GET(req: Request) {
   const [
     { data: rooms, error: roomErr },
     { data: rawLessons, error: lErr },
+    { data: rawOnedayLessons, error: odErr },
     { data: rawResv, error: pErr },
     { data: myClasses, error: cErr },
     { data: grantRows, error: grantErr },
@@ -87,6 +88,14 @@ export async function GET(req: Request) {
       .neq("status", "canceled"),
 
     supabaseServer
+      .from("oneday_lessons")
+      .select("id, lesson_date, lesson_time, status, room_id")
+      .gte("lesson_date", from)
+      .lte("lesson_date", to)
+      .not("room_id", "is", null)
+      .or("status.is.null,status.neq.canceled"),
+
+    supabaseServer
       .from("practice_reservations")
       .select(
         "id, student_id, room_id, date, start_time, end_time, status, created_at, voucher_id, rejected_reason, approved_at"
@@ -94,10 +103,7 @@ export async function GET(req: Request) {
       .gte("date", from)
       .lte("date", to),
 
-    supabaseServer
-      .from("classes")
-      .select("id")
-      .eq("student_id", studentUserId),
+    supabaseServer.from("classes").select("id").eq("student_id", studentUserId),
 
     supabaseServer
       .from("practice_credit_grants")
@@ -112,6 +118,7 @@ export async function GET(req: Request) {
 
   if (roomErr) return json({ error: roomErr.message }, 500);
   if (lErr) return json({ error: lErr.message }, 500);
+  if (odErr) return json({ error: odErr.message }, 500);
   if (pErr) return json({ error: pErr.message }, 500);
   if (cErr) return json({ error: cErr.message }, 500);
   if (grantErr) return json({ error: grantErr.message }, 500);
@@ -122,10 +129,23 @@ export async function GET(req: Request) {
     roomNameById.set(String(r.id), String(r.name));
   });
 
-  const lessons = (rawLessons ?? []).map((l: any) => ({
+  const normalLessons = (rawLessons ?? []).map((l: any) => ({
     ...l,
+    type: "lesson",
     room_name: l.room_id ? roomNameById.get(String(l.room_id)) ?? null : null,
   }));
+
+  const onedayLessons = (rawOnedayLessons ?? []).map((l: any) => ({
+    id: `oneday-${l.id}`,
+    lesson_date: l.lesson_date,
+    lesson_time: l.lesson_time,
+    status: l.status ?? "active",
+    room_id: l.room_id,
+    type: "oneday",
+    room_name: l.room_id ? roomNameById.get(String(l.room_id)) ?? null : null,
+  }));
+
+  const lessons = [...normalLessons, ...onedayLessons];
 
   const reservations = (rawResv ?? []).map((r: any) => {
     const isMine = String(r.student_id) === studentUserId;
@@ -281,7 +301,7 @@ export async function GET(req: Request) {
     )[0];
   } else {
     const upcoming = vv
-    .filter((v) => {
+      .filter((v) => {
         const openFrom = v.practice_open_from ?? v.valid_from;
         return openFrom && openFrom > today;
       })
@@ -290,6 +310,7 @@ export async function GET(req: Request) {
         const bFrom = b.practice_open_from ?? b.valid_from ?? "";
         return String(aFrom).localeCompare(String(bFrom));
       });
+
     picked = upcoming.length > 0 ? upcoming[0] : null;
   }
 
@@ -298,10 +319,7 @@ export async function GET(req: Request) {
     ? Number(picked.quantity ?? 0)
     : Math.max(0, freeHours + paidHours);
 
-  const usedHours = Math.max(
-    0,
-    initialHours + freeHours + paidHours - remainingHours
-  );
+  const usedHours = Math.max(0, initialHours + freeHours + paidHours - remainingHours);
 
   const voucher_summary = picked
     ? {
